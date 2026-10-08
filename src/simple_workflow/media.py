@@ -82,7 +82,13 @@ def ensure_wav(
     sample_rate: int | None = None,
     channels: int | None = None,
 ) -> bytes:
-    """Best-effort conversion: return the input unchanged if it cannot be decoded."""
+    """Convert ``data`` to PCM WAV, transcoding with ffmpeg when necessary.
+
+    A stream that is already a WAV with the requested rate/channel layout is
+    returned unchanged.  Anything else must be decoded by ffmpeg; if that is
+    impossible the error is propagated instead of silently forwarding bytes the
+    downstream API cannot decode (e.g. the M4A returned by ``bv``).
+    """
     info = wav_info(data)
     if info is not None:
         rate_ok = sample_rate is None or info[0] == sample_rate
@@ -92,4 +98,7 @@ def ensure_wav(
     try:
         return to_wav(data, sample_rate=sample_rate, channels=channels)
     except ToolExecutionError:
-        return data
+        # A WAV whose header ``wave`` cannot parse is still a WAV; keep it.
+        if is_wav(data):
+            return data
+        raise

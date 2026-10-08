@@ -37,6 +37,11 @@ uv run pytest           # run the test suite
 uv run simple-workflow serve
 ```
 
+> **ffmpeg** must be on `PATH`. The `bv` tool returns an M4A stream, which the
+> `msst`/`rvc` tools transcode to PCM WAV before calling their APIs. The Docker
+> image already bundles it; for local runs install it with your package manager
+> (e.g. `apt-get install ffmpeg`).
+
 ## The language
 
 ### Values and types

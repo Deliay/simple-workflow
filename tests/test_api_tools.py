@@ -5,14 +5,19 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import numpy as np
 import pytest
 
 from simple_workflow import Param, Signature, ValueType
 from simple_workflow.tools.api import ApiTool, make_api_tools
 from simple_workflow.tools.base import RunContext
 
+from .test_audio import make_wav
+
 TEXT = ValueType.TEXT
 BINARY = ValueType.BINARY
+
+MONO_WAV = make_wav(np.zeros((100, 1), dtype=np.float32))
 
 
 def msst_tool() -> ApiTool:
@@ -37,7 +42,7 @@ def test_msst_uses_named_fields_and_defaults(monkeypatch: pytest.MonkeyPatch) ->
 
     tool = msst_tool()
     ctx = RunContext(endpoints={"msst": "http://host/api/msst/inference"})
-    result = asyncio.run(tool.run(["model.ckpt", b"AUDIO"], ctx))
+    result = asyncio.run(tool.run(["model.ckpt", MONO_WAV], ctx))
 
     assert result == b"PK-zip-bytes"
     assert captured["url"] == "http://host/api/msst/inference"
@@ -68,7 +73,7 @@ def test_rvc_uses_named_fields(monkeypatch: pytest.MonkeyPatch) -> None:
 
     tool = next(tool for tool in make_api_tools() if tool.name == "rvc")
     ctx = RunContext(endpoints={"rvc": "http://host/infer"})
-    result = asyncio.run(tool.run(["voice.pth", b"AUDIO"], ctx))
+    result = asyncio.run(tool.run(["voice.pth", MONO_WAV], ctx))
 
     assert result == b"WAV"
     assert captured["url"] == "http://host/infer"
