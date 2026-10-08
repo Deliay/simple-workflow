@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- build stage: resolve and install dependencies with uv ---------------
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+FROM core.harbor.internal.fffdan.com/ghcr/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 # ---- runtime stage --------------------------------------------------------
-FROM python:3.12-slim-bookworm AS runtime
+FROM core.harbor.internal.fffdan.com/docker-hub-proxy/library/python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
