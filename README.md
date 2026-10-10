@@ -23,6 +23,9 @@ result, and then executes the surviving nodes concurrently.
   dropped before execution.
 - **Dataflow DAG execution** with independent branches running concurrently;
   shared nodes run exactly once.
+- **Layered S3 result cache**: every tool node's output is keyed by its own
+  identity *and* the keys of the nodes feeding it, so a re-run reuses the
+  longest unchanged prefix of the pipeline.
 - **Two tool classes**:
   - *API tools* (`bv`, `msst`, `rvc`) — `POST` form to an external HTTP service.
   - *Local tools* (`unzip`, `audio`) — implemented in-process.
@@ -179,6 +182,7 @@ TOOLS_RVC_ENDPOINT=http://xxx.xxx:7870/infer \
 | `GET`  | `/v1/tools`   | list tools and their signatures          |
 | `POST` | `/v1/compile` | parse + type-check, return the graph     |
 | `POST` | `/v1/run`     | compile + execute                        |
+| `DELETE` | `/v1/cache` | delete **every** cached node output      |
 
 `POST /v1/run`:
 
@@ -200,16 +204,83 @@ Response:
 {
   "outputs": { "final": { "type": "binary", "data": "<base64>" } },
   "elapsed": 1.23,
-  "timings": [ { "node": "tool_4", "tool": "msst", "seconds": 0.9 } ]
+  "timings": [ { "node": "tool_4", "tool": "msst", "seconds": 0.9, "cached": false } ]
 }
+```
+
+## Caching
+
+Every tool node caches its output, and the cache is **layered**: a node's key is
+a digest of its own identity (tool name + literal arguments) combined with the
+keys of the nodes feeding it. A run therefore reuses the longest prefix of the
+pipeline whose inputs are unchanged and only executes from the first node whose
+inputs differ.
+
+For the pipeline:
+
+```text
+[bv:BV1wM1vYsEn9]
+-> band-roformer[msst:melband_roformer_instvox_duality_v2.ckpt]
+-> [unzip:Vocals.wav]
+-> [audio:mono]
+-> [final]
+```
+
+the keys nest as follows:
+
+| Node        | Cache key                                                |
+| ----------- | -------------------------------------------------------- |
+| `bv`        | `H("tool", "bv", "BV1wM1vYsEn9")`                        |
+| `msst`      | `H("tool", "msst", "…duality_v2.ckpt", key(bv))`         |
+| `unzip`     | `H("tool", "unzip", "Vocals.wav", key(msst))`            |
+| `audio`     | `H("tool", "audio", "mono", key(unzip))`                 |
+
+`[input]` nodes contribute a digest of the run-time value, so re-running a
+workflow with different inputs invalidates exactly the affected subtree.
+`DELETE /v1/cache` removes every entry.
+
+Entries are stored in S3 and expire after a TTL (default **60 minutes**); a
+background task periodically evicts stale objects. Enable the cache with:
+
+```bash
+# optional: point at MinIO / any S3-compatible endpoint
+export SW_CACHE_ENDPOINT=http://minio:9000
+export SW_CACHE_BUCKET=my-bucket
+export SW_CACHE_PREFIX=simple-workflow/cache/   # optional
+export SW_CACHE_TTL=3600                         # optional, seconds
+uv run simple-workflow serve
+```
+
+Standard AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_REGION`, …) are picked up by boto3; the `SW_CACHE_ACCESS_KEY` /
+`SW_CACHE_SECRET_KEY` / `SW_CACHE_REGION` / `SW_CACHE_SESSION_TOKEN` variables
+override them. Without `SW_CACHE_BUCKET` (and without
+`SW_CACHE_BACKEND=memory`) the cache is disabled. Other knobs:
+
+| Variable                    | Default                  | Meaning                                   |
+| --------------------------- | ------------------------ | ----------------------------------------- |
+| `SW_CACHE_BACKEND`          | *(unset)*                | `memory` selects the in-process backend   |
+| `SW_CACHE_CLEANUP_INTERVAL` | `300`                    | seconds between background cleanups       |
+
+`DELETE /v1/cache` removes every entry and reports how many were deleted:
+
+```jsonc
+{ "enabled": true, "cleared": 42 }
 ```
 
 ## Docker
 
 ```bash
 docker build -t simple-workflow .
-docker run --rm -p 8000:8000 -e TOOLS_MSST_ENDPOINT=http://host.docker.internal:9000/api/msst/inference simple-workflow
+docker run --rm -p 8000:8000 \
+  -e TOOLS_MSST_ENDPOINT=http://host.docker.internal:9000/api/msst/inference \
+  -e SW_CACHE_BUCKET=my-bucket \
+  -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... \
+  simple-workflow
 ```
+
+The image installs the `cache` extra (`boto3`), so the S3 cache is ready to use
+out of the box.
 
 ## CLI
 
@@ -227,6 +298,7 @@ src/simple_workflow/
   parser.py     # DSL -> statements of elements
   compiler.py   # build graph, prune dead nodes, toposort, type-check -> Plan
   engine.py     # concurrent DAG executor
+  cache.py      # layered, S3-backed node result cache
   registry.py   # tool registry
   signature.py  # param/output type contracts
   types.py      # text/number/binary + coercion & JSON codecs

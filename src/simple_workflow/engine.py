@@ -8,14 +8,22 @@ branches of the pipeline overlap.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any
 
+from .cache import (
+    CacheStore,
+    NullStore,
+    decode_cached,
+    encode_cached,
+    node_cache_key,
+)
 from .compiler import Node, Plan
 from .errors import InputError, ToolExecutionError
 from .registry import ToolRegistry
 from .tools.base import RunContext
-from .types import ValueType, normalize, type_name
+from .types import ValueType, infer_type, normalize, type_name
 
 
 @dataclass(slots=True)
@@ -31,12 +39,19 @@ class NodeResult:
     node_id: str
     value: Any
     seconds: float
+    cached: bool = False
 
 
 class Executor:
-    def __init__(self, plan: Plan, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        plan: Plan,
+        registry: ToolRegistry,
+        cache: CacheStore | None = None,
+    ) -> None:
         self.plan = plan
         self.registry = registry
+        self.cache: CacheStore = cache if cache is not None else NullStore()
 
     async def run(
         self,
@@ -46,6 +61,7 @@ class Executor:
         ctx = ctx or RunContext()
         values: dict[str, list[Any]] = {}
         timings: list[NodeResult] = []
+        keys: dict[str, str] = {}
 
         indegree = {node_id: 0 for node_id in self.plan.order}
         dependents: dict[str, list[str]] = {node_id: [] for node_id in self.plan.order}
@@ -57,7 +73,9 @@ class Executor:
         running: dict[asyncio.Task[NodeResult], str] = {}
 
         def schedule(node_id: str) -> None:
-            task = asyncio.create_task(self._run_node(node_id, inputs, ctx, values))
+            task = asyncio.create_task(
+                self._run_node(node_id, inputs, ctx, values, keys)
+            )
             running[task] = node_id
 
         for node_id in self.plan.order:
@@ -92,6 +110,7 @@ class Executor:
         inputs: dict[str, InputValue],
         ctx: RunContext,
         values: dict[str, list[Any]],
+        keys: dict[str, str],
     ) -> NodeResult:
         loop = asyncio.get_running_loop()
         started = loop.time()
@@ -99,8 +118,50 @@ class Executor:
         incoming = [
             value for producer in node.incoming for value in values[producer]
         ]
+
+        input_value = self._input_value(node, inputs) if node.kind == "input" else None
+        key = node_cache_key(
+            node,
+            [keys[producer] for producer in node.incoming],
+            input_value=input_value,
+        )
+        keys[node_id] = key
+
+        if node.kind == "tool" and self.cache.enabled:
+            cached = await self.cache.get(key)
+            if cached is not None:
+                value = decode_cached(cached, self._output_type(node))
+                return NodeResult(
+                    node_id=node_id,
+                    value=[value],
+                    seconds=loop.time() - started,
+                    cached=True,
+                )
+
         result = await self._execute(node, incoming, inputs, ctx)
+
+        if node.kind == "tool" and self.cache.enabled and result:
+            value_type = self._output_type(node, result[0])
+            await self.cache.put(
+                key,
+                encode_cached(result[0], value_type),
+                {"sw-type": value_type.value, "sw-created": str(int(time.time()))},
+            )
+
         return NodeResult(node_id=node_id, value=result, seconds=loop.time() - started)
+
+    @staticmethod
+    def _output_type(node: Node, value: Any = None) -> ValueType:
+        if node.output_types and node.output_types[0] is not None:
+            return node.output_types[0]
+        if value is None:  # pragma: no cover - tool nodes always have a type
+            raise ToolExecutionError(f"cannot determine output type of {node.raw!r}")
+        return infer_type(value)
+
+    @staticmethod
+    def _input_value(node: Node, inputs: dict[str, InputValue]) -> Any:
+        supplied = inputs.get(node.input_name or "input")
+        return supplied.data if supplied is not None else None
 
     async def _execute(
         self,

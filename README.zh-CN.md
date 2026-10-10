@@ -20,6 +20,8 @@
 - **静态类型检查**：逐条边检查类型，并检查工具参数的个数（arity）。
 - **死代码消除**：到不了 `[final]`/`[output]` 的节点在执行前直接丢弃。
 - **数据流 DAG 执行**：相互独立的分支并发运行；共享节点只执行一次。
+- **分层 S3 结果缓存**：每个工具节点的输出，既以自己的身份为键，又叠加其上游节点的键，
+  因此重跑时能复用管线中最长的一截未变化前缀。
 - **两类工具**：
   - *API 工具*（`bv`、`msst`、`rvc`）——以 `POST` 表单调用外部 HTTP 服务。
   - *本地工具*（`unzip`、`audio`）——在进程内实现。
@@ -160,6 +162,7 @@ TOOLS_RVC_ENDPOINT=http://xxx.xxx:7870/infer \
 | `GET`  | `/v1/tools`   | 列出工具及其签名                 |
 | `POST` | `/v1/compile` | 解析 + 类型检查，返回图          |
 | `POST` | `/v1/run`     | 编译 + 执行                      |
+| `DELETE` | `/v1/cache` | 删除**所有**已缓存的节点输出     |
 
 `POST /v1/run`：
 
@@ -181,16 +184,77 @@ TOOLS_RVC_ENDPOINT=http://xxx.xxx:7870/infer \
 {
   "outputs": { "final": { "type": "binary", "data": "<base64>" } },
   "elapsed": 1.23,
-  "timings": [ { "node": "tool_4", "tool": "msst", "seconds": 0.9 } ]
+  "timings": [ { "node": "tool_4", "tool": "msst", "seconds": 0.9, "cached": false } ]
 }
+```
+
+## 缓存
+
+每个工具节点都会缓存自己的输出，而且是**分层**的：节点键 = 自身身份（工具名 + 字面量参数）
+与所有上游节点键的摘要。因此重跑时，会复用管线中输入的未变化的最长前缀，只从第一个输入
+发生变化的节点开始重新执行。
+
+以这条管线为例：
+
+```text
+[bv:BV1wM1vYsEn9]
+-> band-roformer[msst:melband_roformer_instvox_duality_v2.ckpt]
+-> [unzip:Vocals.wav]
+-> [audio:mono]
+-> [final]
+```
+
+各节点的键逐层嵌套：
+
+| 节点     | 缓存键                                                   |
+| -------- | -------------------------------------------------------- |
+| `bv`     | `H("tool", "bv", "BV1wM1vYsEn9")`                        |
+| `msst`   | `H("tool", "msst", "…duality_v2.ckpt", key(bv))`         |
+| `unzip`  | `H("tool", "unzip", "Vocals.wav", key(msst))`            |
+| `audio`  | `H("tool", "audio", "mono", key(unzip))`                 |
+
+`[input]` 节点会把运行期输入值的摘要纳入键，所以用不同输入重跑时，只有受影响的子树会失效。
+`DELETE /v1/cache` 会删除所有缓存条目。
+
+缓存对象存放在 S3，带有 TTL（默认 **60 分钟**）；后台任务会定期清理过期对象。启用方式：
+
+```bash
+# 可选：指向 MinIO 或其他兼容 S3 的端点
+export SW_CACHE_ENDPOINT=http://minio:9000
+export SW_CACHE_BUCKET=my-bucket
+export SW_CACHE_PREFIX=simple-workflow/cache/   # 可选
+export SW_CACHE_TTL=3600                         # 可选，秒
+uv run simple-workflow serve
+```
+
+标准的 AWS 凭据（`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_REGION` 等）会被
+boto3 自动读取；`SW_CACHE_ACCESS_KEY` / `SW_CACHE_SECRET_KEY` / `SW_CACHE_REGION` /
+`SW_CACHE_SESSION_TOKEN` 可覆盖它们。未设置 `SW_CACHE_BUCKET`（且未设置
+`SW_CACHE_BACKEND=memory`）时缓存处于关闭状态。其他配置：
+
+| 变量                        | 默认值     | 含义                         |
+| --------------------------- | ---------- | ---------------------------- |
+| `SW_CACHE_BACKEND`          | *未设置*   | `memory` 使用进程内后端      |
+| `SW_CACHE_CLEANUP_INTERVAL` | `300`      | 后台清理的间隔秒数           |
+
+`DELETE /v1/cache` 会删除所有条目并返回删除数量：
+
+```jsonc
+{ "enabled": true, "cleared": 42 }
 ```
 
 ## Docker
 
 ```bash
 docker build -t simple-workflow .
-docker run --rm -p 8000:8000 -e TOOLS_MSST_ENDPOINT=http://host.docker.internal:9000/api/msst/inference simple-workflow
+docker run --rm -p 8000:8000 \
+  -e TOOLS_MSST_ENDPOINT=http://host.docker.internal:9000/api/msst/inference \
+  -e SW_CACHE_BUCKET=my-bucket \
+  -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... \
+  simple-workflow
 ```
+
+镜像已安装 `cache` 附加依赖（`boto3`），S3 缓存开箱即用。
 
 ## CLI
 
@@ -208,6 +272,7 @@ src/simple_workflow/
   parser.py     # DSL -> 语句/元素
   compiler.py   # 建图、剪枝、拓扑排序、类型检查 -> Plan
   engine.py     # 并发 DAG 执行器
+  cache.py      # 分层、基于 S3 的节点结果缓存
   registry.py   # 工具注册表
   signature.py  # 参数/返回值类型契约
   types.py      # text/number/binary + 转换与 JSON 编解码

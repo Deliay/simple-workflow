@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import time
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from .cache import CacheStore, build_cache, cleanup_interval
 from .compiler import Plan, compile_script
 from .engine import Executor, InputValue
 from .errors import CompileError, ScriptSyntaxError, WorkflowError
@@ -23,6 +26,8 @@ from .types import (
     encode_value,
     infer_type,
 )
+
+logger = logging.getLogger(__name__)
 
 TypeName = Literal["text", "number", "binary"]
 
@@ -60,12 +65,18 @@ class TimingOut(BaseModel):
     node: str
     tool: str | None = None
     seconds: float
+    cached: bool = False
 
 
 class RunResponse(BaseModel):
     outputs: dict[str, ValueSpec]
     elapsed: float
     timings: list[TimingOut]
+
+
+class CacheStatusOut(BaseModel):
+    enabled: bool
+    cleared: int
 
 
 def _to_value_types(spec: Mapping[str, str] | None) -> dict[str, ValueType] | None:
@@ -85,7 +96,31 @@ def _to_inputs(inputs: dict[str, ValueSpec]) -> dict[str, InputValue]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.registry = build_registry()
-    yield
+    app.state.cache = build_cache()
+    cleanup_task: asyncio.Task[None] | None = None
+    if app.state.cache.enabled:
+        cleanup_task = asyncio.create_task(_cache_cleanup_loop(app.state.cache))
+    try:
+        yield
+    finally:
+        if cleanup_task is not None:
+            cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup_task
+
+
+async def _cache_cleanup_loop(cache: CacheStore) -> None:
+    """Periodically evict entries past their TTL."""
+    interval = cleanup_interval()
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            removed = await cache.purge_expired()
+        except Exception:  # noqa: BLE001 - the loop must survive any error
+            logger.exception("cache cleanup failed")
+            continue
+        if removed:
+            logger.info("cache cleanup removed %d expired entrie(s)", removed)
 
 
 app = FastAPI(
@@ -98,6 +133,10 @@ app = FastAPI(
 
 def _registry(request: Request) -> ToolRegistry:
     return request.app.state.registry  # type: ignore[no-any-return]
+
+
+def _cache(request: Request) -> CacheStore:
+    return request.app.state.cache  # type: ignore[no-any-return]
 
 
 def _compile(request: Request, body: CompileRequest) -> Plan:
@@ -153,7 +192,7 @@ async def run_endpoint(request: Request, body: RunRequest) -> RunResponse:
         timeout=body.timeout or default_timeout,
     )
 
-    executor = Executor(plan, registry)
+    executor = Executor(plan, registry, cache=_cache(request))
     started = time.perf_counter()
     try:
         outputs, timings = await executor.run(_to_inputs(body.inputs), ctx)
@@ -174,10 +213,19 @@ async def run_endpoint(request: Request, body: RunRequest) -> RunResponse:
                 node=result.node_id,
                 tool=plan.nodes[result.node_id].tool_name,
                 seconds=result.seconds,
+                cached=result.cached,
             )
             for result in timings
         ],
     )
 
 
-__all__ = ["app", "ValueSpec", "RunRequest", "CompileRequest"]
+@app.delete("/v1/cache", response_model=CacheStatusOut)
+async def clear_cache(request: Request) -> CacheStatusOut:
+    """Delete every cached node output."""
+    store = _cache(request)
+    removed = await store.clear()
+    return CacheStatusOut(enabled=store.enabled, cleared=removed)
+
+
+__all__ = ["app", "ValueSpec", "RunRequest", "CompileRequest", "CacheStatusOut"]

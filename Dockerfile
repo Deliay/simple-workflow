@@ -12,13 +12,13 @@ WORKDIR /app
 # Install dependencies first so this layer is cached across source changes.
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev
+    uv sync --frozen --no-install-project --no-dev --extra cache
 
 # Install the project itself.
 COPY README.md ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --extra cache
 
 
 # ---- runtime stage --------------------------------------------------------
