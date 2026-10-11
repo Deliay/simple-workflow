@@ -4,7 +4,8 @@
 standard library ``wave`` module and ``numpy``:
 
 * ``mono``   - down-mix every input to a single channel,
-* ``reverb`` - apply a lightweight FFT convolution reverb,
+* ``reverb`` - apply a short, damped, dry-dominant convolution reverb tuned
+  for pop material (pre-delay, high-frequency damping, rumble high-pass),
 * ``mix``    - match every stream's loudness, then sum them, keeping the
   result under the peak ceiling,
 * ``amp``    - automatic gain: RMS-normalise to a target loudness, with a
@@ -103,10 +104,17 @@ class ZipTool(Tool):
 
 
 class AudioTool(Tool):
-    HOP = 0.5  # seconds of reverb tail
     TARGET_RMS = 0.1  # target RMS amplitude for ``amp`` (~ -20 dBFS)
     PEAK_CEILING = 0.95  # ``amp`` falls back to this peak when RMS would clip
     SILENCE_FLOOR = 1e-4  # do not boost streams quieter than this RMS
+    # Pop-friendly reverb: a short, damped tail with a touch of pre-delay so the
+    # dry performance stays clear and the effect supports rather than swamps it.
+    REVERB_PRE_DELAY = 0.02  # seconds of silence before the tail starts
+    REVERB_RT60 = 0.8  # seconds for the tail to decay by 60 dB
+    REVERB_DAMP_HZ = 4000.0  # high-frequency damping (smoother, less sibilant)
+    REVERB_HIGHPASS_HZ = 150.0  # remove rumble that would muddy the mix
+    REVERB_DRY = 0.9  # dry signal level
+    REVERB_WET = 0.25  # reverb level, well below the dry signal
 
     def __init__(self) -> None:
         super().__init__(
@@ -206,10 +214,10 @@ class AudioTool(Tool):
         wet = np.empty_like(samples)
         for channel in range(samples.shape[1]):
             wet[:, channel] = _fft_convolve(samples[:, channel], impulse)
-        peak = float(np.max(np.abs(wet))) if wet.size else 0.0
-        if peak > 1.0:
-            wet /= peak
-        output = 0.7 * samples + 0.5 * wet
+        output = self.REVERB_DRY * samples + self.REVERB_WET * wet
+        peak = float(np.max(np.abs(output))) if output.size else 0.0
+        if peak > self.PEAK_CEILING:
+            output *= self.PEAK_CEILING / peak
         return _encode_wav(output, rate)
 
 
@@ -275,16 +283,47 @@ def _encode_wav(samples: np.ndarray, rate: int) -> bytes:
 
 
 def _make_impulse(rate: int) -> np.ndarray:
-    length = max(1, int(AudioTool.HOP * rate))
-    t = np.arange(length, dtype=np.float32)
-    envelope: np.ndarray = np.exp(-6.0 * t / length)
+    """Build a short, damped reverb impulse tuned for pop material.
+
+    The tail is exponentially decaying (``REVERB_RT60``), smoothed to damp the
+    highs instead of a bright noise wash, and high-passed to keep low rumble out
+    of the mix.  It starts after a short pre-delay and is energy-normalised, so
+    the wet signal sits at a predictable level under the dry one.
+    """
+    pre = max(1, int(AudioTool.REVERB_PRE_DELAY * rate))
+    tail = max(1, int(2.0 * AudioTool.REVERB_RT60 * rate))
+    t = np.arange(tail, dtype=np.float32) / rate
+    envelope: np.ndarray = np.exp(-6.907755 * t / AudioTool.REVERB_RT60)
     rng = np.random.default_rng(0)
-    noise: np.ndarray = rng.standard_normal(length).astype(np.float32)
-    impulse: np.ndarray = envelope * noise
-    pre = min(length, max(1, int(0.01 * rate)))
-    impulse[:pre] *= np.linspace(0.0, 1.0, pre, dtype=np.float32)
-    peak = float(np.max(np.abs(impulse))) + 1e-9
-    return impulse / peak
+    noise: np.ndarray = rng.standard_normal(tail).astype(np.float32)
+    noise = _high_pass(_low_pass(noise, rate, AudioTool.REVERB_DAMP_HZ), rate,
+                       AudioTool.REVERB_HIGHPASS_HZ)
+    impulse = np.zeros(pre + tail, dtype=np.float32)
+    impulse[pre:] = envelope * noise
+    energy = float(np.sqrt(np.sum(np.square(impulse))))
+    if energy > 0.0:
+        impulse /= energy
+    return impulse
+
+
+def _low_pass(signal: np.ndarray, rate: int, cutoff_hz: float) -> np.ndarray:
+    """Gentle FIR low-pass: a Hann-windowed moving average."""
+    if signal.size == 0 or cutoff_hz <= 0.0:
+        return signal
+    width = max(1, int(rate / cutoff_hz))
+    kernel = np.hanning(width + 1).astype(np.float32)
+    total = float(kernel.sum())
+    if total == 0.0:
+        return signal
+    filtered: np.ndarray = np.convolve(signal, kernel / total, mode="same")
+    return filtered
+
+
+def _high_pass(signal: np.ndarray, rate: int, cutoff_hz: float) -> np.ndarray:
+    """One-pole-style high-pass: remove the low-frequency moving average."""
+    if signal.size == 0 or cutoff_hz <= 0.0:
+        return signal
+    return np.asarray(signal - _low_pass(signal, rate, cutoff_hz), dtype=np.float32)
 
 
 def _fft_convolve(signal: np.ndarray, impulse: np.ndarray) -> np.ndarray:

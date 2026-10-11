@@ -78,6 +78,22 @@ def test_reverb_preserves_length() -> None:
     assert float(np.sum(np.abs(samples[20:]))) > 0
 
 
+def test_reverb_is_subtle_and_has_predelay() -> None:
+    rate = 8000
+    signal = np.zeros((4000, 1), dtype=np.float32)
+    signal[0, 0] = 1.0
+    out = run(AudioTool(), ["reverb", make_wav(signal, rate)])
+    samples, _ = read_wav(out)
+    pre = int(AudioTool.REVERB_PRE_DELAY * rate)
+    # The dry impulse dominates and nothing precedes the reverb tail.
+    assert abs(float(samples[0, 0]) - AudioTool.REVERB_DRY) < 1e-2
+    assert float(np.max(np.abs(samples[1:pre, 0]))) < 1e-4
+    # The tail is present but well below the dry signal (not swamped).
+    wet_peak = float(np.max(np.abs(samples[pre:, 0])))
+    assert 0.0 < wet_peak < 0.1
+    assert float(np.max(np.abs(samples))) <= 1.0
+
+
 def test_mix_resamples_differing_rates() -> None:
     slow = np.full((100, 1), 0.2, dtype=np.float32)
     fast = np.full((200, 1), 0.1, dtype=np.float32)

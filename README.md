@@ -192,7 +192,7 @@ named voicebank such as `小松绿v1.1` and returns a WAV. Set
 `audio` operations:
 
 - `mono` — down-mix to a single channel,
-- `reverb` — apply an FFT-convolution reverb,
+- `reverb` — apply a short, damped, dry-dominant FFT-convolution reverb tuned for pop material (pre-delay, high-frequency damping, rumble high-pass),
 - `mix` — match every stream's loudness (RMS), then sum them under the peak ceiling,
 - `amp` — automatic gain: RMS-normalise a stream to a target loudness, with a peak ceiling as a fallback (silence untouched),
 - `mp3` — encode the input to MP3 (ABR/VBR V0) through ffmpeg.
