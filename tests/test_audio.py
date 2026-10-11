@@ -1,4 +1,4 @@
-"""Local audio tool tests (mono / mix / reverb)."""
+"""Local audio tool tests (mono / mix / reverb / amp)."""
 
 from __future__ import annotations
 
@@ -80,6 +80,41 @@ def test_mix_upmixes_mono_to_stereo() -> None:
     out = run(AudioTool(), ["mix", make_wav(mono, 8000), make_wav(stereo, 8000)])
     samples, _ = read_wav(out)
     assert samples.shape[1] == 2
+
+
+def test_amp_normalises_rms() -> None:
+    quiet = np.full((100, 1), 0.25, dtype=np.float32)
+    out = run(AudioTool(), ["amp", make_wav(quiet)])
+    samples, _ = read_wav(out)
+    rms = float(np.sqrt(np.mean(np.square(samples))))
+    assert abs(rms - AudioTool.TARGET_RMS) < 1e-2
+
+
+def test_amp_levels_differing_signals() -> None:
+    # Two constant signals at different levels should land at the same RMS.
+    quiet = run(AudioTool(), ["amp", make_wav(np.full((100, 1), 0.2, np.float32))])
+    loud = run(AudioTool(), ["amp", make_wav(np.full((100, 1), 0.8, np.float32))])
+    q, _ = read_wav(quiet)
+    loud_samples, _ = read_wav(loud)
+    q_rms = float(np.sqrt(np.mean(np.square(q))))
+    loud_rms = float(np.sqrt(np.mean(np.square(loud_samples))))
+    assert abs(q_rms - loud_rms) < 1e-3
+
+
+def test_amp_respects_peak_ceiling() -> None:
+    # A sparse transient: RMS gain would overshoot, so the peak ceiling kicks in.
+    transient = np.zeros((100, 1), dtype=np.float32)
+    transient[0, 0] = 0.9
+    out = run(AudioTool(), ["amp", make_wav(transient)])
+    samples, _ = read_wav(out)
+    assert float(np.max(np.abs(samples))) <= AudioTool.PEAK_CEILING + 1e-2
+
+
+def test_amp_leaves_silence_untouched() -> None:
+    silence = np.zeros((100, 1), dtype=np.float32)
+    out = run(AudioTool(), ["amp", make_wav(silence)])
+    samples, _ = read_wav(out)
+    assert float(np.max(np.abs(samples))) == 0.0
 
 
 def test_unknown_operation() -> None:

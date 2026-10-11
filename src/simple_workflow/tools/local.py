@@ -1,11 +1,13 @@
 """Local (in-process) tools: ``unzip`` and ``audio``.
 
-``audio`` implements three operations on 16-bit PCM WAV data using only the
+``audio`` implements several operations on 16-bit PCM WAV data using only the
 standard library ``wave`` module and ``numpy``:
 
 * ``mono``   - down-mix every input to a single channel,
 * ``reverb`` - apply a lightweight FFT convolution reverb,
-* ``mix``    - sum several streams together and normalise the peaks.
+* ``mix``    - sum several streams together and normalise the peaks,
+* ``amp``    - automatic gain: RMS-normalise to a target loudness, with a
+  peak ceiling as a fallback so the result never clips.
 """
 
 from __future__ import annotations
@@ -75,6 +77,9 @@ def _find_member(names: list[str], wanted: str) -> str | None:
 
 class AudioTool(Tool):
     HOP = 0.5  # seconds of reverb tail
+    TARGET_RMS = 0.1  # target RMS amplitude for ``amp`` (~ -20 dBFS)
+    PEAK_CEILING = 0.95  # ``amp`` falls back to this peak when RMS would clip
+    SILENCE_FLOOR = 1e-4  # do not boost streams quieter than this RMS
 
     def __init__(self) -> None:
         super().__init__(
@@ -98,6 +103,8 @@ class AudioTool(Tool):
                 return self._reverb(streams)
             if op == "mix":
                 return self._mix(streams)
+            if op == "amp":
+                return self._amp(streams)
             if op in ("decode", "to-wav", "wav"):
                 return self._decode(streams)
         except ToolExecutionError:
@@ -105,7 +112,7 @@ class AudioTool(Tool):
         except Exception as exc:  # noqa: BLE001
             raise ToolExecutionError(f"audio:{op} failed: {exc}") from exc
         raise ToolExecutionError(
-            f"audio: unknown operation {op!r} (expected one of: mono, reverb, mix, decode)"
+            f"audio: unknown operation {op!r} (expected one of: mono, reverb, mix, amp, decode)"
         )
 
     def _decode(self, streams: list[bytes]) -> bytes:
@@ -138,6 +145,21 @@ class AudioTool(Tool):
         if peak > 1.0:
             mixed /= peak
         return _encode_wav(mixed, rate)
+
+    def _amp(self, streams: list[bytes]) -> bytes:
+        samples, rate = _decode_wav(streams[0])
+        if samples.size == 0:
+            return _encode_wav(samples, rate)
+        rms = float(np.sqrt(np.mean(np.square(samples))))
+        if rms < self.SILENCE_FLOOR:
+            return _encode_wav(samples, rate)
+        gain = self.TARGET_RMS / rms
+        # Peak ceiling as a fallback: if the RMS gain would push a transient
+        # past the ceiling, trade loudness for a clean, unclipped result.
+        peak = float(np.max(np.abs(samples)))
+        if peak * gain > self.PEAK_CEILING:
+            gain = self.PEAK_CEILING / peak
+        return _encode_wav(samples * gain, rate)
 
     def _reverb(self, streams: list[bytes]) -> bytes:
         samples, rate = _decode_wav(streams[0])
