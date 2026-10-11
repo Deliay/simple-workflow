@@ -86,7 +86,7 @@ def test_rvc_uses_named_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     assert b"wav" in body
 
 
-def test_v2m_sends_audio_and_default_output_formats(
+def test_v2m_sends_language_audio_and_default_output_formats(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -106,12 +106,14 @@ def test_v2m_sends_audio_and_default_output_formats(
 
     tool = next(tool for tool in make_api_tools() if tool.name == "v2m")
     ctx = RunContext(endpoints={"v2m": "http://host/api/v2m/inference"})
-    result = asyncio.run(tool.run([MONO_WAV], ctx))
+    result = asyncio.run(tool.run(["zh", MONO_WAV], ctx))
 
     assert result == b"PK-v2m-zip"
     assert captured["url"] == "http://host/api/v2m/inference"
     body = captured["body"]
     assert isinstance(body, bytes)
+    assert b'name="language"' in body
+    assert b"zh" in body
     assert b'name="output_formats"' in body
     assert b"mid,ustx,txt" in body
     assert b'name="audio"' in body

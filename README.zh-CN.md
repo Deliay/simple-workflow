@@ -100,8 +100,8 @@ uv run simple-workflow serve
 再给出两个更紧凑的示例，分别使用 MSST 服务的 Vocal2Midi 与 DiffSinger 端点：
 
 ```text
-# 人声音频 -> 包含 mid/ustx/txt 产物的 zip
-[input:vocal] -> [v2m] -> [final]
+# 人声音频 -> 包含 mid/ustx/txt 产物的 zip（强制指定语言，例如 zh）
+[input:vocal] -> [v2m:zh] -> [final]
 
 # 用音源渲染 OpenUtau .ustx 乐谱 -> wav
 [input:score] -> rendered[svs:小松绿v1.1]
@@ -122,7 +122,7 @@ binary → 原始字节）。
 | `bv`   | `(bvid: text) -> binary`                 | binary | `GET .../video/{bvid}/download?kind=audio`  |
 | `msst` | `(model: text, audio: binary) -> binary` | binary | `POST` 字段 `model`、`audio`（+ `response_format=zip`） |
 | `rvc`  | `(model: text, audio: binary) -> binary` | binary | `POST` 字段 `model`、`audio`（+ `output_format=wav`） |
-| `v2m`  | `(audio: binary) -> binary`              | binary | `POST` 字段 `audio`（+ `output_formats=mid,ustx,txt`） |
+| `v2m`  | `(language: text, audio: binary) -> binary` | binary | `POST` 字段 `language`、`audio`（+ `output_formats=mid,ustx,txt`） |
 | `svs`  | `(model: text, ustx: binary) -> binary`  | binary | `POST` 字段 `model`、`ustx`（+ `output_format=wav`） |
 
 端点里可以包含 `{name}` 占位符（每个对应一个签名参数）；它们会被 URL 编码后的实参替换，
@@ -147,7 +147,9 @@ binary → 原始字节）。
 
 `v2m` 对接 [MSST API](https://github.com/Deliay/msst-api) 的 Vocal2Midi 端点
 （`POST /api/v2m/inference`）；它把人声音频转换为一个 zip，内含按歌词对齐的产物（默认
-MIDI、USTX 与纯文本），并原样返回。设置 `TOOLS_V2M_ENDPOINT=http://host/api/v2m/inference`。
+MIDI、USTX 与纯文本），并原样返回。第一个参数是**必填的 2 字母语言代码**（`zh`、`ja`、
+`en` 或 `yue`），会作为 `language` 字段发送，让服务跳过自身的语言检测 —— 在 `->` 链上写
+`[v2m:zh]`，音频由边流入。设置 `TOOLS_V2M_ENDPOINT=http://host/api/v2m/inference`。
 
 `svs` 对接同一服务的 DiffSinger（歌声合成）端点（`POST /api/diffsinger/inference`）；
 它用指定的音源（如 `小松绿v1.1`）渲染 OpenUtau `.ustx` 乐谱并返回 WAV。设置

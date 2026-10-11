@@ -114,8 +114,8 @@ Two more compact examples using the MSST service's Vocal2Midi and DiffSinger
 endpoints:
 
 ```text
-# vocal audio -> zip of mid/ustx/txt artifacts
-[input:vocal] -> [v2m] -> [final]
+# vocal audio -> zip of mid/ustx/txt artifacts (language forced, e.g. zh)
+[input:vocal] -> [v2m:zh] -> [final]
 
 # render an OpenUtau .ustx score with a voicebank -> wav
 [input:score] -> rendered[svs:小松绿v1.1]
@@ -138,7 +138,7 @@ binary → raw bytes).
 | `bv`   | `(bvid: text) -> binary`                 | binary | `GET .../video/{bvid}/download?kind=audio` |
 | `msst` | `(model: text, audio: binary) -> binary` | binary | `POST` fields `model`, `audio` (+ `response_format=zip`) |
 | `rvc`  | `(model: text, audio: binary) -> binary` | binary | `POST` fields `model`, `audio` (+ `output_format=wav`) |
-| `v2m`  | `(audio: binary) -> binary`              | binary | `POST` field `audio` (+ `output_formats=mid,ustx,txt`) |
+| `v2m`  | `(language: text, audio: binary) -> binary` | binary | `POST` fields `language`, `audio` (+ `output_formats=mid,ustx,txt`) |
 | `svs`  | `(model: text, ustx: binary) -> binary`  | binary | `POST` fields `model`, `ustx` (+ `output_format=wav`) |
 
 The endpoint may contain `{name}` placeholders (one per signature parameter);
@@ -169,7 +169,10 @@ enabled auth).
 `v2m` targets the [MSST API](https://github.com/Deliay/msst-api)'s Vocal2Midi
 endpoint (`POST /api/v2m/inference`); it turns vocal audio into a zip of
 lyric-aligned artifacts (MIDI, USTX and plain text by default), returned
-verbatim. Set `TOOLS_V2M_ENDPOINT=http://host/api/v2m/inference`.
+verbatim. The first argument is a **required 2-letter language code**
+(`zh`, `ja`, `en` or `yue`), sent as the `language` field so the service skips
+its own detection — write `[v2m:zh]` under a `->` feeding the audio. Set
+`TOOLS_V2M_ENDPOINT=http://host/api/v2m/inference`.
 
 `svs` targets the same service's DiffSinger (singing voice synthesis) endpoint
 (`POST /api/diffsinger/inference`); it renders an OpenUtau `.ustx` score with a
