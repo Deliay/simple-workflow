@@ -8,7 +8,7 @@
 [var:dereverb-vocal] -> noreverb-vocal[unzip:noreverb]
 [var:noreverb-vocal] -> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]{mix=vocal}
 [var:viridis-vocal] -> reverb-viridis-vocal[audio:reverb]
-[var:band-roformer] -> bands[unzip:other.wav]
-[var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]
+[var:band-roformer] -> bands[unzip:other.wav]{mix=inst}
+[var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]{mix=harmony}
 [var:viridis-vocal, bands, harmony] -> result[audio:mix]
 [var:result] -> [final]

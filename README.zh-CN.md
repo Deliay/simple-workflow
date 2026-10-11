@@ -111,8 +111,8 @@ a[bv:ID]{file=clip.mp4,mix=vocal} -> b[audio:amp]{file=loud.wav}
 -> [unzip:noreverb]
 -> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]{mix=vocal}
 -> reverb-viridis-vocal[audio:reverb]
-[var:band-roformer] -> bands[unzip:other.wav]
-[var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]
+[var:band-roformer] -> bands[unzip:other.wav]{mix=inst}
+[var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]{mix=harmony}
 [var:viridis-vocal, var:bands, var:harmony] -> result[audio:mix]
 [var:result] -> [final]
 ```
@@ -190,20 +190,23 @@ MIDI、USTX 与纯文本），并原样返回。第一个参数是**必填的 2 
 
 - `mono` —— 降混为单声道，
 - `reverb` —— 施加适合流行音乐的短促、带阻尼、以干声为主的 FFT 卷积混响（含预延迟、高频阻尼与低频高通），
-- `mix` —— 先对齐各轨响度再相加；被 `{mix=vocal}` 标记的轨作为人声被抬高，伴奏在其下方做侧链闪避（见下文），
+- `mix` —— 先对齐各轨响度再相加；`{mix=...}` 标签指定角色（`vocal`/`harmony`/`inst`）：主唱被抬高、和声在其下方、伴奏床被压低，并由主唱对其余角色做侧链闪避（见下文），
 - `amp` —— 自动增益：按 RMS 归一化到目标响度，并用峰值上限兜底（静音保持不变），
 - `mp3` —— 通过 ffmpeg 编码为 MP3（ABR/VBR V0）。
 
-#### 用 `{mix=vocal}` 突出人声
+#### 用 `{mix=ROLE}` 突出人声
 
-给音轨加上 `{mix=vocal}` 标签，即可把它标记为人声。只要 `mix` 至少看到一路人声，它就会
-抬高人声（`MIX_VOCAL_GAIN`）、压低未标记的伴奏（`MIX_BACKING_GAIN`），并用人声包络对
-伴奏做**侧链闪避**（`MIX_DUCK_DEPTH`）。没有任何人声标记时，`mix` 仍是普通的等响相加，
-现有流水线不受影响。
+给音轨加上角色标签：`{mix=vocal}`（主唱）、`{mix=harmony}`（和声）或 `{mix=inst}`
+（伴奏床）。未标记的按伴奏床处理。`mix` 会抬高主唱（`MIX_VOCAL_GAIN`）、把和声放在其
+下方（`MIX_HARMONY_GAIN`）、压低伴奏床（`MIX_INST_GAIN`），再由主唱对其余角色做**侧链
+闪避**——伴奏床闪避更狠（`MIX_DUCK_DEPTH`），和声更轻（`MIX_HARMONY_DUCK_DEPTH`）。
+没有任何角色标签时，`mix` 仍是普通的等响相加，现有流水线不受影响。
 
 ```text
 vocal[rvc:voice.pth]{mix=vocal}
-[var:vocal, var:bands, var:harmony] -> [audio:mix] -> [final]
+harmony[unzip:Instrumental.wav]{mix=harmony}
+bands[unzip:other.wav]{mix=inst}
+[var:vocal, var:harmony, var:bands] -> [audio:mix] -> [final]
 ```
 
 #### 用 `{file=name}` 与 `[zip]` 命名打包文件

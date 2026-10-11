@@ -124,6 +124,31 @@ def test_mix_lifts_vocal_role() -> None:
     assert abs(ratio - AudioTool.MIX_VOCAL_GAIN) < 0.02
 
 
+def test_mix_role_gains() -> None:
+    signal = np.full((400, 1), 0.2, dtype=np.float32)
+    wav = make_wav(signal)
+    base = float(np.max(np.abs(read_wav(run(AudioTool(), ["mix", wav]))[0])))
+    for role, gain in (
+        ("vocal", AudioTool.MIX_VOCAL_GAIN),
+        ("harmony", AudioTool.MIX_HARMONY_GAIN),
+        ("inst", AudioTool.MIX_INST_GAIN),
+    ):
+        out = read_wav(run(AudioTool(), ["mix", Tagged(wav, role=role)]))[0]
+        assert abs(float(np.max(np.abs(out))) / base - gain) < 0.02
+
+
+def test_mix_harmony_ducks_less_than_inst() -> None:
+    tool = AudioTool()
+    vocal = np.zeros((2000, 1), dtype=np.float32)
+    vocal[:1000, 0] = tool.TARGET_RMS * tool.MIX_VOCAL_GAIN
+    inst_duck = tool._duck_gain(vocal, rate=8000)
+    harmony_duck = tool._duck_gain(
+        vocal, rate=8000, depth=tool.MIX_HARMONY_DUCK_DEPTH
+    )
+    assert float(harmony_duck[:900].mean()) > float(inst_duck[:900].mean())
+    assert float(harmony_duck[:900].mean()) < 1.0
+
+
 def test_mix_duck_gain_dips_under_vocal() -> None:
     tool = AudioTool()
     vocal = np.zeros((2000, 1), dtype=np.float32)

@@ -6,9 +6,9 @@ standard library ``wave`` module and ``numpy``:
 * ``mono``   - down-mix every input to a single channel,
 * ``reverb`` - apply a short, damped, dry-dominant convolution reverb tuned
   for pop material (pre-delay, high-frequency damping, rumble high-pass),
-* ``mix``    - match every stream's loudness, then sum them. Tracks tagged with
-  ``{mix=vocal}`` are treated as vocals: they are lifted and the backing is
-  side-chain ducked under them,
+* ``mix``    - match every stream's loudness, then sum them. The ``mix`` tag
+  picks a role: ``vocal`` leads, ``harmony`` supports and ``inst`` (or no tag)
+  is the bed; the lead side-chain ducks the other roles under it,
 * ``amp``    - automatic gain: RMS-normalise to a target loudness, with a
   peak ceiling as a fallback so the result never clips,
 * ``mp3``    - encode the input to MP3 (ABR/VBR V0) through ffmpeg.
@@ -116,10 +116,12 @@ class AudioTool(Tool):
     REVERB_HIGHPASS_HZ = 150.0  # remove rumble that would muddy the mix
     REVERB_DRY = 0.9  # dry signal level
     REVERB_WET = 0.25  # reverb level, well below the dry signal
-    # ``mix`` roles: ``{mix=vocal}`` tracks lead, everything else is backing.
-    MIX_VOCAL_GAIN = 1.5  # lift vocals (~ +3.5 dB)
-    MIX_BACKING_GAIN = 0.85  # tuck the backing down (~ -1.4 dB)
-    MIX_DUCK_DEPTH = 0.4  # backing dips up to ~ -4.4 dB under the vocal
+    # ``mix`` roles: vocals lead, harmony supports, everything else is the bed.
+    MIX_VOCAL_GAIN = 1.5  # lead vocal (~ +3.5 dB)
+    MIX_HARMONY_GAIN = 1.0  # harmony vocal, below the lead
+    MIX_INST_GAIN = 0.85  # instrumental bed (~ -1.4 dB)
+    MIX_DUCK_DEPTH = 0.4  # bed dips up to ~ -4.4 dB under the lead
+    MIX_HARMONY_DUCK_DEPTH = 0.2  # harmony dips less than the bed
     MIX_DUCK_WINDOW = 0.03  # envelope window in seconds for the duck
 
     def __init__(self) -> None:
@@ -189,41 +191,53 @@ class AudioTool(Tool):
                     aligned = np.pad(aligned, ((0, 0), (0, channels - aligned.shape[1])))
             prepared.append(aligned)
 
-        # Tracks tagged with ``{mix=vocal}`` become the lead; the rest is
-        # backing.  Without any vocal tag the mix stays a plain equal-loudness
-        # sum, so existing pipelines are unaffected.
+        # Roles: ``{mix=vocal}`` leads, ``{mix=harmony}`` supports and anything
+        # else (``{mix=inst}`` or untagged) is the bed.  Without any role the mix
+        # stays a plain equal-loudness sum, so existing pipelines are unaffected.
+        has_role = any(role is not None for role in roles)
         has_vocal = any(role == "vocal" for role in roles)
         length = max(samples.shape[0] for samples in prepared)
         vocal = np.zeros((length, channels), dtype=np.float32)
-        backing = np.zeros((length, channels), dtype=np.float32)
+        harmony = np.zeros((length, channels), dtype=np.float32)
+        inst = np.zeros((length, channels), dtype=np.float32)
         for samples, role in zip(prepared, roles, strict=True):
             track = samples * self._loudness_gain(samples)
-            if has_vocal and role == "vocal":
+            if has_role and role == "vocal":
                 track = track * self.MIX_VOCAL_GAIN
                 target = vocal
+            elif has_role and role == "harmony":
+                track = track * self.MIX_HARMONY_GAIN
+                target = harmony
             else:
-                if has_vocal:
-                    track = track * self.MIX_BACKING_GAIN
-                target = backing
+                if has_role:
+                    track = track * self.MIX_INST_GAIN
+                target = inst
             target[: samples.shape[0]] += track
 
-        if has_vocal and np.any(backing):
-            duck = self._duck_gain(vocal, rate)
-            backing = backing * duck[:, None]
-        mixed = vocal + backing
+        if has_vocal:
+            if np.any(inst):
+                inst = inst * self._duck_gain(vocal, rate)[:, None]
+            if np.any(harmony):
+                harmony = harmony * self._duck_gain(
+                    vocal, rate, self.MIX_HARMONY_DUCK_DEPTH
+                )[:, None]
+        mixed = vocal + harmony + inst
         peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
         if peak > self.PEAK_CEILING:
             mixed *= self.PEAK_CEILING / peak
         return _encode_wav(mixed, rate)
 
-    def _duck_gain(self, vocal: np.ndarray, rate: int) -> np.ndarray:
-        """Time-varying backing gain: dips while the vocal is sounding."""
+    def _duck_gain(
+        self, vocal: np.ndarray, rate: int, depth: float | None = None
+    ) -> np.ndarray:
+        """Time-varying gain that dips while the vocal is sounding."""
+        depth = self.MIX_DUCK_DEPTH if depth is None else depth
         mono = vocal.mean(axis=1)
         window = max(1, int(self.MIX_DUCK_WINDOW * rate))
         envelope = np.sqrt(np.maximum(_smooth(np.square(mono), window), 0.0))
         reference = self.TARGET_RMS * self.MIX_VOCAL_GAIN
         level = np.clip(envelope / (reference + 1e-9), 0.0, 1.0)
-        duck = 1.0 - self.MIX_DUCK_DEPTH * level
+        duck = 1.0 - depth * level
         return _smooth(duck, window)
 
     def _loudness_gain(self, samples: np.ndarray) -> float:

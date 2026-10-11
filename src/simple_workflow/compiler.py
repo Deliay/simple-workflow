@@ -26,6 +26,7 @@ from .types import MaybeType, ValueType, type_matches, type_name
 _WILDCARD = None
 _TEXT = ValueType.TEXT
 _TAG_KEYS = {"file", "mix"}
+_MIX_ROLES = {"vocal", "harmony", "inst"}
 
 
 @dataclass(slots=True)
@@ -140,6 +141,11 @@ class _Builder:
             )
         node.file_name = element.tags.get("file")
         node.mix_role = element.tags.get("mix")
+        if node.mix_role is not None and node.mix_role not in _MIX_ROLES:
+            raise WorkflowError(
+                f"{element.raw!r}: unknown mix role {node.mix_role!r} "
+                f"(expected: {', '.join(sorted(_MIX_ROLES))})"
+            )
 
     def _make_node(self, element: Element) -> Node:
         seq = self._counter

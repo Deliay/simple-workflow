@@ -126,8 +126,8 @@ is referenced later):
 -> [unzip:noreverb]
 -> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]{mix=vocal}
 -> reverb-viridis-vocal[audio:reverb]
-[var:band-roformer] -> bands[unzip:other.wav]
-[var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]
+[var:band-roformer] -> bands[unzip:other.wav]{mix=inst}
+[var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]{mix=harmony}
 [var:viridis-vocal, var:bands, var:harmony] -> result[audio:mix]
 [var:result] -> [final]
 ```
@@ -216,21 +216,25 @@ named voicebank such as `小松绿v1.1` and returns a WAV. Set
 
 - `mono` — down-mix to a single channel,
 - `reverb` — apply a short, damped, dry-dominant FFT-convolution reverb tuned for pop material (pre-delay, high-frequency damping, rumble high-pass),
-- `mix` — match every stream's loudness, then sum them. Tracks tagged `{mix=vocal}` are lifted and the backing is side-chain ducked under them (see below),
+- `mix` — match every stream's loudness, then sum them. The `{mix=...}` tag picks a role (`vocal`/`harmony`/`inst`): the lead is lifted, the harmony sits below it, the bed is tucked down, and the lead side-chain ducks the rest (see below),
 - `amp` — automatic gain: RMS-normalise a stream to a target loudness, with a peak ceiling as a fallback (silence untouched),
 - `mp3` — encode the input to MP3 (ABR/VBR V0) through ffmpeg.
 
-#### Vocal-forward mixing with `{mix=vocal}`
+#### Vocal-forward mixing with `{mix=ROLE}`
 
-Tag a track with `{mix=vocal}` to mark it as a *vocal*. When `mix` sees at least
-one vocal it lifts the vocals (`MIX_VOCAL_GAIN`), tucks the untagged backing down
-(`MIX_BACKING_GAIN`) and **side-chain ducks** the backing under the vocal
-envelope (`MIX_DUCK_DEPTH`). Without any vocal tag, `mix` stays a plain
-equal-loudness sum, so existing pipelines are unaffected.
+Tag a track with its role: `{mix=vocal}` (lead), `{mix=harmony}` (support) or
+`{mix=inst}` (instrumental bed). Anything untagged counts as the bed. `mix` lifts
+the lead (`MIX_VOCAL_GAIN`), keeps the harmony below it (`MIX_HARMONY_GAIN`) and
+tucks the bed down (`MIX_INST_GAIN`); the lead then **side-chain ducks** the other
+roles — fully for the bed (`MIX_DUCK_DEPTH`) and more gently for the harmony
+(`MIX_HARMONY_DUCK_DEPTH`). With no role tags, `mix` stays a plain equal-loudness
+sum, so existing pipelines are unaffected.
 
 ```text
 vocal[rvc:voice.pth]{mix=vocal}
-[var:vocal, var:bands, var:harmony] -> [audio:mix] -> [final]
+harmony[unzip:Instrumental.wav]{mix=harmony}
+bands[unzip:other.wav]{mix=inst}
+[var:vocal, var:harmony, var:bands] -> [audio:mix] -> [final]
 ```
 
 #### Naming bundled files with `{file=name}` and `[zip]`

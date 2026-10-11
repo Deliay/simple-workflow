@@ -105,6 +105,11 @@ def test_tags_reject_unknown_keys(registry) -> None:  # noqa: ANN001
         compile_script("a[bv:x]{oops=1}\n[var:a] -> [final]", registry)
 
 
+def test_mix_rejects_unknown_role(registry) -> None:  # noqa: ANN001
+    with pytest.raises(WorkflowError, match="unknown mix role"):
+        compile_script("a[bv:x]{mix=vocals}\n[var:a] -> [final]", registry)
+
+
 def test_tags_only_on_value_producers(registry) -> None:  # noqa: ANN001
     with pytest.raises(WorkflowError, match="tags may only"):
         compile_script("a[bv:x]\n[var:a]{file=y} -> [final]", registry)
