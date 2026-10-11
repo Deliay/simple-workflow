@@ -67,12 +67,23 @@ A value's type travels with it along every edge and is checked at compile time.
 | `[var:a, b, c]`                 | bundle several references into a multi-value input        |
 | `[input]` / `[input:name]`      | read a workflow input (text/number/binary)                |
 | `[final]` / `[output]`          | terminal sink; its value is a workflow result             |
-| `[file:name.mp4]`               | tag the incoming value with a filename (terminal)         |
-| `[mix:vocal]`                   | tag the incoming value's mix role (terminal; see below)   |
+| `name[tool:arg]{key=value}`     | call `tool` and tag its value (see below)                 |
 | `[!tool:arg]`                   | a leading `!` bypasses the node's cache (see below)       |
 
 `[var:a, b]` and `[var:a, var:b]` are equivalent — the `var:` prefix is optional
 on the individual items.
+
+### Tags `{key=value}`
+
+A `{...}` block after a value-producing node attaches metadata to that node's
+output: `file=NAME` names it for `zip` and `mix=ROLE` assigns its role (e.g.
+`vocal`) for `mix`. Tags are written at the node that produces the value, not on
+the reference:
+
+```text
+a[bv:ID]{file=clip.mp4,mix=vocal} -> b[audio:amp]{file=loud.wav}
+[var:a, var:b] -> [zip] -> [final]
+```
 
 ### The arrow `->`
 
@@ -103,17 +114,16 @@ is referenced later):
 -> [audio:mono]
 -> [msst:dereverb_room_anvuew_sdr_13.7432.ckpt]
 -> [unzip:noreverb]
--> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]
+-> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]{mix=vocal}
 -> reverb-viridis-vocal[audio:reverb]
-[var:viridis-vocal] -> [mix:vocal]
 [var:band-roformer] -> bands[unzip:other.wav]
 [var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]
 [var:viridis-vocal, var:bands, var:harmony] -> result[audio:mix]
 [var:result] -> [final]
 ```
 
-Here `reverb-viridis-vocal` is never used, so it is pruned silently, and
-`[mix:vocal]` marks the converted vocal as the lead track for `audio:mix`.
+Here `reverb-viridis-vocal` is never used, so it is pruned silently, and the
+`{mix=vocal}` tag marks the converted vocal as the lead track for `audio:mix`.
 
 Two more compact examples using the MSST service's Vocal2Midi and DiffSinger
 endpoints:
@@ -196,34 +206,32 @@ named voicebank such as `小松绿v1.1` and returns a WAV. Set
 
 - `mono` — down-mix to a single channel,
 - `reverb` — apply a short, damped, dry-dominant FFT-convolution reverb tuned for pop material (pre-delay, high-frequency damping, rumble high-pass),
-- `mix` — match every stream's loudness, then sum them. Tracks tagged with `[mix:vocal]` are lifted and the backing is side-chain ducked under them (see below),
+- `mix` — match every stream's loudness, then sum them. Tracks tagged `{mix=vocal}` are lifted and the backing is side-chain ducked under them (see below),
 - `amp` — automatic gain: RMS-normalise a stream to a target loudness, with a peak ceiling as a fallback (silence untouched),
 - `mp3` — encode the input to MP3 (ABR/VBR V0) through ffmpeg.
 
-#### Vocal-forward mixing with `[mix:vocal]`
+#### Vocal-forward mixing with `{mix=vocal}`
 
-`[mix:vocal]` is a **terminal** tag (like `[file:name]`): it marks the variable
-flowing into it as a *vocal*. When `mix` sees at least one vocal it lifts the
-vocals (`MIX_VOCAL_GAIN`), tucks the untagged backing down (`MIX_BACKING_GAIN`)
-and **side-chain ducks** the backing under the vocal envelope
-(`MIX_DUCK_DEPTH`). Without any vocal tag, `mix` stays a plain equal-loudness
-sum, so existing pipelines are unaffected.
+Tag a track with `{mix=vocal}` to mark it as a *vocal*. When `mix` sees at least
+one vocal it lifts the vocals (`MIX_VOCAL_GAIN`), tucks the untagged backing down
+(`MIX_BACKING_GAIN`) and **side-chain ducks** the backing under the vocal
+envelope (`MIX_DUCK_DEPTH`). Without any vocal tag, `mix` stays a plain
+equal-loudness sum, so existing pipelines are unaffected.
 
 ```text
-[var:vocal] -> [mix:vocal]                       # mark as the lead vocal
+vocal[rvc:voice.pth]{mix=vocal}
 [var:vocal, var:bands, var:harmony] -> [audio:mix] -> [final]
 ```
 
-#### Naming bundled files with `[file:name]` and `[zip]`
+#### Naming bundled files with `{file=name}` and `[zip]`
 
-`[file:name]` is a **terminal** tag: it names the value flowing into it and must
-be the last element of its chain. `[zip]` then packs every tagged variable into a
-single archive, using those names as members. A `zip` input without a
-`[file:name]` tag is an error.
+`{file=name}` names the value a node produces. `[zip]` then packs every named
+variable into a single archive, using those names as members. A `zip` input
+without a `{file=...}` tag is an error.
 
 ```text
-a[bv:test] -> [file:测试.mp4]
-b[bv:test2] -> [file:测试2.mp4]
+a[bv:test]{file=测试.mp4}
+b[bv:test2]{file=测试2.mp4}
 [var:a, var:b] -> [zip] -> [final]
 ```
 

@@ -12,11 +12,13 @@ Element shapes recognised inside a chain::
     [var:a, b, c]                     # bundle of references (multi-input)
     [input] / [input:name]            # read one of the API inputs
     [final] / [output] / [output:name]# terminal sink (workflow result)
-    [file:name.mp4]                   # tag the incoming value with a filename
-    [mix:vocal]                       # tag the incoming value with a mix role
+    name[tool:arg]{file=x.mp4}        # ``{key=value}`` tags on a value producer
     [!audio:mix]                      # a leading ``!`` marks the node as
                                       # cache-bypassing (it and its downstream
                                       # subtree are always re-executed)
+
+Tags are written after the node that produces the value: ``file=NAME`` names it
+for ``zip`` and ``mix=ROLE`` assigns its role (e.g. ``vocal``) for ``mix``.
 """
 
 from __future__ import annotations
@@ -28,14 +30,15 @@ from .errors import ScriptSyntaxError
 
 _ANON = re.compile(r"^\[\s*(.*?)\s*\]$", re.DOTALL)
 _NAMED = re.compile(r"^([^\[\]]+?)\s*\[(.*)\]$", re.DOTALL)
+_TAGS = re.compile(r"^(?P<core>.*)\{(?P<tags>[^{}]*)\}\s*$", re.DOTALL)
 
 #: Bracketed heads that are *not* tool calls.
-RESERVED = {"var", "input", "final", "output", "file", "mix"}
+RESERVED = {"var", "input", "final", "output"}
 
 
 @dataclass(slots=True)
 class Element:
-    kind: str  # "tool" | "ref" | "input" | "sink" | "file" | "mix"
+    kind: str  # "tool" | "ref" | "input" | "sink"
     raw: str
     name: str | None = None
     tool: str | None = None
@@ -44,9 +47,8 @@ class Element:
     input_name: str | None = None
     sink_name: str | None = None
     sink_kind: str | None = None
-    file_name: str | None = None
-    mix_role: str | None = None
     no_cache: bool = False
+    tags: dict[str, str] = field(default_factory=dict)
 
 
 def parse_script(text: str) -> list[list[Element]]:
@@ -68,19 +70,49 @@ def parse_element(text: str) -> Element:
     if not text:
         raise ScriptSyntaxError("empty element")
 
-    match = _ANON.match(text)
-    if match:
-        return _parse_bracket(match.group(1).strip(), name=None, raw=text)
+    original = text
+    core, tags = _split_tags(text)
+    if not core:
+        raise ScriptSyntaxError(f"missing element before tags in {original!r}")
 
-    match = _NAMED.match(text)
+    match = _ANON.match(core)
     if match:
-        name = match.group(1).strip()
-        if not name:
-            raise ScriptSyntaxError(f"missing node name in {text!r}")
-        return _parse_bracket(match.group(2).strip(), name=name, raw=text)
+        element = _parse_bracket(match.group(1).strip(), name=None, raw=original)
+    else:
+        match = _NAMED.match(core)
+        if match:
+            name = match.group(1).strip()
+            if not name:
+                raise ScriptSyntaxError(f"missing node name in {original!r}")
+            element = _parse_bracket(match.group(2).strip(), name=name, raw=original)
+        else:
+            # Bare identifier: shorthand for a variable reference.
+            element = Element(kind="ref", raw=original, refs=[core])
+    element.tags = tags
+    return element
 
-    # Bare identifier: shorthand for a variable reference.
-    return Element(kind="ref", raw=text, refs=[text])
+
+def _split_tags(text: str) -> tuple[str, dict[str, str]]:
+    match = _TAGS.match(text)
+    if not match:
+        return text, {}
+    return match.group("core").strip(), _parse_tags(match.group("tags"))
+
+
+def _parse_tags(inner: str) -> dict[str, str]:
+    tags: dict[str, str] = {}
+    for item in inner.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        key, sep, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key or not value:
+            raise ScriptSyntaxError(f"invalid tag {item!r}; expected key=value")
+        if key in tags:
+            raise ScriptSyntaxError(f"duplicate tag {key!r}")
+        tags[key] = value
+    return tags
 
 
 def _parse_bracket(inner: str, *, name: str | None, raw: str) -> Element:
@@ -112,19 +144,9 @@ def _parse_bracket(inner: str, *, name: str | None, raw: str) -> Element:
             sink_name=rest or None,
             no_cache=no_cache,
         )
-    if head == "file":
-        if not rest:
-            raise ScriptSyntaxError(f"[file] requires a name: {raw!r}")
-        return Element(
-            kind="file", raw=raw, name=name, file_name=rest, no_cache=no_cache
-        )
-    if head == "mix":
-        if not rest:
-            raise ScriptSyntaxError(
-                f"[mix] requires a role, e.g. [mix:vocal]: {raw!r}"
-            )
-        return Element(
-            kind="mix", raw=raw, name=name, mix_role=rest, no_cache=no_cache
+    if head in ("file", "mix"):
+        raise ScriptSyntaxError(
+            f"[{head}:...] is no longer valid; write {{{head}=...}} after the node"
         )
 
     # Anything else is a tool call.

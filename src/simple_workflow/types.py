@@ -36,8 +36,8 @@ class Tagged(bytes):
     """A binary value carrying the metadata attached by terminal tags.
 
     It *is* a ``bytes`` instance (so every existing binary tool keeps working).
-    ``filename`` is set by ``[file:name]`` (consumed by ``zip``) and ``role`` by
-    ``[mix:vocal]`` (consumed by ``mix``); a value may carry either or both.
+    ``filename`` is set by ``{file=name}`` (consumed by ``zip``) and ``role`` by
+    ``{mix=vocal}`` (consumed by ``mix``); a value may carry either or both.
     """
 
     filename: str | None

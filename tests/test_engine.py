@@ -76,8 +76,8 @@ def test_zip_packs_tagged_variables_by_filename(registry) -> None:  # noqa: ANN0
     import zipfile
 
     script = (
-        "a[bv:test] -> [file:测试.mp4]\n"
-        "b[bv:test2] -> [file:测试2.mp4]\n"
+        "a[bv:test]{file=测试.mp4}\n"
+        "b[bv:test2]{file=测试2.mp4}\n"
         "[var:a, var:b] -> [zip] -> [final]"
     )
     outputs, _ = _run(script, registry)
@@ -91,7 +91,7 @@ def test_zip_without_a_file_tag_raises(registry) -> None:  # noqa: ANN001
     from simple_workflow.errors import ToolExecutionError
 
     script = "a[bv:test]\nb[bv:test2]\n[var:a, var:b] -> [zip] -> [final]"
-    with pytest.raises(ToolExecutionError, match="file:name"):
+    with pytest.raises(ToolExecutionError, match=r"file=\.\.\."):
         _run(script, registry)
 
 
@@ -117,6 +117,6 @@ def test_mix_vocal_tag_reaches_the_tool() -> None:
 
     spy_registry = ToolRegistry()
     spy_registry.register(Spy())
-    script = "v[input:vocal] -> [mix:vocal]\n[var:v] -> [audio:mix] -> [final]"
+    script = "v[input:vocal]{mix=vocal}\n[var:v] -> [audio:mix] -> [final]"
     _run(script, spy_registry, {"vocal": InputValue(ValueType.BINARY, b"\x00")})
     assert seen["roles"] == ["vocal"]

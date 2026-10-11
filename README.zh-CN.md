@@ -58,11 +58,21 @@ uv run simple-workflow serve
 | `[var:a, b, c]`                 | 把多个引用打包成一个多值输入                      |
 | `[input]` / `[input:name]`      | 读取工作流输入（text/number/binary）              |
 | `[final]` / `[output]`          | 终止汇点；其值即工作流结果                        |
-| `[file:name.mp4]`               | 给流入的值打上文件名标签（终结点）                |
-| `[mix:vocal]`                   | 给流入的值打上混音角色标签（终结点，见下文）      |
+| `name[tool:arg]{key=value}`     | 调用 `tool` 并给其输出打标签（见下文）            |
 | `[!tool:arg]`                   | 开头的 `!` 表示该节点忽略缓存（见下文）           |
 
 `[var:a, b]` 与 `[var:a, var:b]` 等价 —— 每一项的 `var:` 前缀是可选的。
+
+### 标签 `{key=value}`
+
+在产出值的节点后面写一个 `{...}` 块，即可给该节点的输出附加元数据：`file=NAME` 为
+`zip` 提供文件名，`mix=ROLE` 为 `mix` 指定角色（如 `vocal`）。标签写在**产出该值的
+节点**上，而不是引用处：
+
+```text
+a[bv:ID]{file=clip.mp4,mix=vocal} -> b[audio:amp]{file=loud.wav}
+[var:a, var:b] -> [zip] -> [final]
+```
 
 ### 箭头 `->`
 
@@ -90,16 +100,15 @@ uv run simple-workflow serve
 -> [audio:mono]
 -> [msst:dereverb_room_anvuew_sdr_13.7432.ckpt]
 -> [unzip:noreverb]
--> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]
+-> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]{mix=vocal}
 -> reverb-viridis-vocal[audio:reverb]
-[var:viridis-vocal] -> [mix:vocal]
 [var:band-roformer] -> bands[unzip:other.wav]
 [var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]
 [var:viridis-vocal, var:bands, var:harmony] -> result[audio:mix]
 [var:result] -> [final]
 ```
 
-这里 `reverb-viridis-vocal` 从未被使用，会被静默剪掉；`[mix:vocal]` 把转换后的人声标记为
+这里 `reverb-viridis-vocal` 从未被使用，会被静默剪掉；`{mix=vocal}` 把转换后的人声标记为
 `audio:mix` 的主唱声部。
 
 再给出两个更紧凑的示例，分别使用 MSST 服务的 Vocal2Midi 与 DiffSinger 端点：
@@ -172,31 +181,30 @@ MIDI、USTX 与纯文本），并原样返回。第一个参数是**必填的 2 
 
 - `mono` —— 降混为单声道，
 - `reverb` —— 施加适合流行音乐的短促、带阻尼、以干声为主的 FFT 卷积混响（含预延迟、高频阻尼与低频高通），
-- `mix` —— 先对齐各轨响度再相加；被 `[mix:vocal]` 标记的轨作为人声被抬高，伴奏在其下方做侧链闪避（见下文），
+- `mix` —— 先对齐各轨响度再相加；被 `{mix=vocal}` 标记的轨作为人声被抬高，伴奏在其下方做侧链闪避（见下文），
 - `amp` —— 自动增益：按 RMS 归一化到目标响度，并用峰值上限兜底（静音保持不变），
 - `mp3` —— 通过 ffmpeg 编码为 MP3（ABR/VBR V0）。
 
-#### 用 `[mix:vocal]` 突出人声
+#### 用 `{mix=vocal}` 突出人声
 
-`[mix:vocal]` 是一个**终结点**标签（和 `[file:name]` 一样）：它把流入的变量标记为人声。
-只要 `mix` 至少看到一路人声，它就会抬高人声（`MIX_VOCAL_GAIN`）、压低未标记的伴奏
-（`MIX_BACKING_GAIN`），并用人声包络对伴奏做**侧链闪避**（`MIX_DUCK_DEPTH`）。没有任何
-人声标记时，`mix` 仍是普通的等响相加，现有流水线不受影响。
+给音轨加上 `{mix=vocal}` 标签，即可把它标记为人声。只要 `mix` 至少看到一路人声，它就会
+抬高人声（`MIX_VOCAL_GAIN`）、压低未标记的伴奏（`MIX_BACKING_GAIN`），并用人声包络对
+伴奏做**侧链闪避**（`MIX_DUCK_DEPTH`）。没有任何人声标记时，`mix` 仍是普通的等响相加，
+现有流水线不受影响。
 
 ```text
-[var:vocal] -> [mix:vocal]                       # 标记主唱
+vocal[rvc:voice.pth]{mix=vocal}
 [var:vocal, var:bands, var:harmony] -> [audio:mix] -> [final]
 ```
 
-#### 用 `[file:name]` 与 `[zip]` 命名打包文件
+#### 用 `{file=name}` 与 `[zip]` 命名打包文件
 
-`[file:name]` 是一个**终结点**标签：它给流入的值命名，且必须是所在链的最后一个元素。
-`[zip]` 随后把所有带标签的变量打包成一个 zip，并用这些名字作为压缩包内的文件名。
-若某个 `zip` 输入没有 `[file:name]` 标签，则会报错。
+`{file=name}` 给节点产出的值命名。`[zip]` 随后把所有带名字的变量打包成一个 zip，并用
+这些名字作为压缩包内的文件名。若某个 `zip` 输入没有 `{file=...}` 标签，则会报错。
 
 ```text
-a[bv:test] -> [file:测试.mp4]
-b[bv:test2] -> [file:测试2.mp4]
+a[bv:test]{file=测试.mp4}
+b[bv:test2]{file=测试2.mp4}
 [var:a, var:b] -> [zip] -> [final]
 ```
 

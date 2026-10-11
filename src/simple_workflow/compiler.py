@@ -25,6 +25,7 @@ from .types import MaybeType, ValueType, type_matches, type_name
 
 _WILDCARD = None
 _TEXT = ValueType.TEXT
+_TAG_KEYS = {"file", "mix"}
 
 
 @dataclass(slots=True)
@@ -92,8 +93,6 @@ class _Builder:
         self.input_types: dict[str, ValueType | None] = dict(input_types or {})
         self.nodes: dict[str, Node] = {}
         self.symbols: dict[str, str] = {}
-        self.file_tags: dict[str, str] = {}
-        self.mix_tags: dict[str, str] = {}
         self.creation_order: list[str] = []
         self._counter = 0
 
@@ -111,19 +110,10 @@ class _Builder:
         for statement in statements:
             self._build_statement(statement)
         self._resolve_refs()
-        self._apply_tags()
 
     def _build_statement(self, elements: list[Element]) -> None:
         ids: list[str] = []
         for index, element in enumerate(elements):
-            if element.kind in ("file", "mix"):
-                if index != len(elements) - 1:
-                    raise WorkflowError(
-                        f"{element.raw!r}: a [{element.kind}:...] tag must be "
-                        "the last element of a chain"
-                    )
-                self._record_tag(elements[:index], element)
-                break
             if index > 0 and element.kind in ("ref", "input"):
                 raise WorkflowError(
                     f"{element.raw!r} cannot consume an upstream value; only a "
@@ -134,41 +124,22 @@ class _Builder:
         for producer, consumer in zip(ids, ids[1:], strict=False):
             self.nodes[consumer].incoming.append(producer)
 
-    def _record_tag(self, predecessors: list[Element], element: Element) -> None:
-        """Associate a terminal ``[file:name]`` / ``[mix:role]`` tag with its var."""
-        if not predecessors:
+    def _apply_element_tags(self, node: Node, element: Element) -> None:
+        if not element.tags:
+            return
+        if element.kind not in ("tool", "input"):
             raise WorkflowError(
-                f"{element.raw!r}: a [{element.kind}:...] tag needs a value on its left"
+                f"{element.raw!r}: tags may only follow a tool call or an "
+                "[input] node"
             )
-        previous = predecessors[-1]
-        symbol: str | None = None
-        if previous.name and previous.kind in ("tool", "input"):
-            symbol = previous.name
-        elif previous.kind == "ref" and len(previous.refs) == 1:
-            symbol = previous.refs[0]
-        if symbol is None:
+        unknown = sorted(set(element.tags) - _TAG_KEYS)
+        if unknown:
             raise WorkflowError(
-                f"{element.raw!r}: a [{element.kind}:...] tag must follow a named "
-                "node or a single [var:...] reference"
+                f"{element.raw!r}: unknown tag(s) {', '.join(unknown)} "
+                f"(expected: {', '.join(sorted(_TAG_KEYS))})"
             )
-        if element.kind == "file":
-            self.file_tags[symbol] = element.file_name or ""
-        else:
-            self.mix_tags[symbol] = element.mix_role or ""
-
-    def _apply_tags(self) -> None:
-        for symbol, filename in self.file_tags.items():
-            producer = self._tag_target(symbol, f"file:{filename}")
-            self.nodes[producer].file_name = filename
-        for symbol, role in self.mix_tags.items():
-            producer = self._tag_target(symbol, f"mix:{role}")
-            self.nodes[producer].mix_role = role
-
-    def _tag_target(self, symbol: str, label: str) -> str:
-        producer = self.symbols.get(symbol)
-        if producer is None:
-            raise WorkflowError(f"[{label}]: undefined variable {symbol!r}")
-        return producer
+        node.file_name = element.tags.get("file")
+        node.mix_role = element.tags.get("mix")
 
     def _make_node(self, element: Element) -> Node:
         seq = self._counter
@@ -214,6 +185,7 @@ class _Builder:
             raise WorkflowError(f"unknown element kind: {element.kind!r}")
 
         node.no_cache = element.no_cache
+        self._apply_element_tags(node, element)
         self._add(node)
         if element.name and element.kind in ("tool", "input"):
             if element.name in self.symbols:

@@ -64,23 +64,26 @@ def test_bang_marks_node_as_cache_bypassing() -> None:
     assert named.no_cache is True
 
 
-def test_file_tag_is_parsed() -> None:
-    element = parse_script("[var:x] -> [file:测试.mp4]")[0][1]
-    assert element.kind == "file"
-    assert element.file_name == "测试.mp4"
+def test_tags_are_parsed_after_the_node() -> None:
+    element = parse_script("a[bv:x]{file=yyy,mix=vocal}")[0][0]
+    assert element.name == "a"
+    assert element.tool == "bv"
+    assert element.kind == "tool"
+    assert element.tags == {"file": "yyy", "mix": "vocal"}
 
 
-def test_file_requires_a_name() -> None:
-    with pytest.raises(ScriptSyntaxError, match="file"):
-        parse_script("[var:x] -> [file:]")
+def test_anonymous_node_can_carry_tags() -> None:
+    element = parse_script("[bv:x]{file=zzz}")[0][0]
+    assert element.kind == "tool"
+    assert element.tags == {"file": "zzz"}
 
 
-def test_mix_role_tag_is_parsed() -> None:
-    element = parse_script("[var:x] -> [mix:vocal]")[0][1]
-    assert element.kind == "mix"
-    assert element.mix_role == "vocal"
+def test_tag_requires_key_value() -> None:
+    with pytest.raises(ScriptSyntaxError, match="key=value"):
+        parse_script("a[bv:x]{file}")
 
 
-def test_mix_requires_a_role() -> None:
-    with pytest.raises(ScriptSyntaxError, match="mix"):
-        parse_script("[var:x] -> [mix]")
+def test_old_tag_syntax_is_rejected() -> None:
+    for script in ("[var:x] -> [file:y]", "[var:x] -> [mix:vocal]"):
+        with pytest.raises(ScriptSyntaxError, match="no longer valid"):
+            parse_script(script)

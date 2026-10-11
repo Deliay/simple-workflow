@@ -7,14 +7,14 @@ standard library ``wave`` module and ``numpy``:
 * ``reverb`` - apply a short, damped, dry-dominant convolution reverb tuned
   for pop material (pre-delay, high-frequency damping, rumble high-pass),
 * ``mix``    - match every stream's loudness, then sum them. Tracks tagged with
-  ``[mix:vocal]`` are treated as vocals: they are lifted and the backing is
+  ``{mix=vocal}`` are treated as vocals: they are lifted and the backing is
   side-chain ducked under them,
 * ``amp``    - automatic gain: RMS-normalise to a target loudness, with a
   peak ceiling as a fallback so the result never clips,
 * ``mp3``    - encode the input to MP3 (ABR/VBR V0) through ffmpeg.
 
 ``zip`` packs every input into a single archive.  Each input must have been
-tagged with a ``[file:name]`` node, which supplies the member's filename.
+tagged with a ``{file=name}`` key, which supplies the member's filename.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ class ZipTool(Tool):
                 filename = getattr(value, "filename", None)
                 if not filename:
                     raise ToolExecutionError(
-                        f"zip: input {index + 1} has no [file:name] tag"
+                        f"zip: input {index + 1} has no {{file=...}} tag"
                     )
                 archive.writestr(str(filename), bytes(value))
         return buffer.getvalue()
@@ -116,7 +116,7 @@ class AudioTool(Tool):
     REVERB_HIGHPASS_HZ = 150.0  # remove rumble that would muddy the mix
     REVERB_DRY = 0.9  # dry signal level
     REVERB_WET = 0.25  # reverb level, well below the dry signal
-    # ``mix`` roles: ``[mix:vocal]`` tracks lead, everything else is backing.
+    # ``mix`` roles: ``{mix=vocal}`` tracks lead, everything else is backing.
     MIX_VOCAL_GAIN = 1.5  # lift vocals (~ +3.5 dB)
     MIX_BACKING_GAIN = 0.85  # tuck the backing down (~ -1.4 dB)
     MIX_DUCK_DEPTH = 0.4  # backing dips up to ~ -4.4 dB under the vocal
@@ -189,7 +189,7 @@ class AudioTool(Tool):
                     aligned = np.pad(aligned, ((0, 0), (0, channels - aligned.shape[1])))
             prepared.append(aligned)
 
-        # Tracks tagged with ``[mix:vocal]`` become the lead; the rest is
+        # Tracks tagged with ``{mix=vocal}`` become the lead; the rest is
         # backing.  Without any vocal tag the mix stays a plain equal-loudness
         # sum, so existing pipelines are unaffected.
         has_vocal = any(role == "vocal" for role in roles)

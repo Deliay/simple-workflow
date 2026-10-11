@@ -86,38 +86,25 @@ def test_bang_is_carried_onto_the_node(registry) -> None:  # noqa: ANN001
 
 
 def test_file_tag_is_attached_to_producer(registry) -> None:  # noqa: ANN001
-    script = (
-        "a[bv:test] -> [file:测试.mp4]\n"
-        "[var:a] -> [final]"
-    )
+    script = "a[bv:test]{file=测试.mp4}\n[var:a] -> [final]"
     plan = compile_script(script, registry)
     tagged = [node for node in plan.nodes.values() if node.file_name]
     assert [node.file_name for node in tagged] == ["测试.mp4"]
     assert tagged[0].name == "a"
 
 
-def test_file_tag_must_be_last(registry) -> None:  # noqa: ANN001
-    with pytest.raises(WorkflowError, match="last element"):
-        compile_script("a[bv:x] -> [file:x.mp4] -> [final]", registry)
-
-
-def test_file_tag_needs_a_source(registry) -> None:  # noqa: ANN001
-    with pytest.raises(WorkflowError, match="value on its left"):
-        compile_script("[file:x.mp4]", registry)
-
-
-def test_file_tag_needs_a_named_source(registry) -> None:  # noqa: ANN001
-    with pytest.raises(WorkflowError, match="named node"):
-        compile_script("[bv:x] -> [file:x.mp4]", registry)
-
-
 def test_mix_role_is_attached_to_producer(registry) -> None:  # noqa: ANN001
-    script = "a[bv:test] -> [mix:vocal]\n[var:a] -> [final]"
+    script = "a[bv:test]{mix=vocal}\n[var:a] -> [final]"
     plan = compile_script(script, registry)
     roles = {node.name: node.mix_role for node in plan.nodes.values() if node.mix_role}
     assert roles == {"a": "vocal"}
 
 
-def test_mix_tag_must_be_last(registry) -> None:  # noqa: ANN001
-    with pytest.raises(WorkflowError, match="last element"):
-        compile_script("a[bv:x] -> [mix:vocal] -> [final]", registry)
+def test_tags_reject_unknown_keys(registry) -> None:  # noqa: ANN001
+    with pytest.raises(WorkflowError, match="unknown tag"):
+        compile_script("a[bv:x]{oops=1}\n[var:a] -> [final]", registry)
+
+
+def test_tags_only_on_value_producers(registry) -> None:  # noqa: ANN001
+    with pytest.raises(WorkflowError, match="tags may only"):
+        compile_script("a[bv:x]\n[var:a]{file=y} -> [final]", registry)

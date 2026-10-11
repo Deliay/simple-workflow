@@ -212,8 +212,8 @@ def test_file_tag_survives_cache_roundtrip(registry) -> None:  # noqa: ANN001
 
     cache = MemoryStore(ttl=3600)
     script = (
-        "a[bv:test] -> [file:测试.mp4]\n"
-        "b[bv:test2] -> [file:测试2.mp4]\n"
+        "a[bv:test]{file=测试.mp4}\n"
+        "b[bv:test2]{file=测试2.mp4}\n"
         "[var:a, var:b] -> [zip] -> [final]"
     )
     first, _ = _run(script, registry, cache)

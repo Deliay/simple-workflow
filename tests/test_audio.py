@@ -221,5 +221,5 @@ def test_zip_packs_tagged_inputs() -> None:
 def test_zip_requires_a_file_name() -> None:
     from simple_workflow.errors import ToolExecutionError
 
-    with pytest.raises(ToolExecutionError, match="file:name"):
+    with pytest.raises(ToolExecutionError, match=r"file=\.\.\."):
         run(ZipTool(), [b"untagged"])

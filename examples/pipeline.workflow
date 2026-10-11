@@ -6,9 +6,8 @@
 [var:vocal] -> mono-vocal[audio:mono]
 [var:mono-vocal] -> dereverb-vocal[msst:dereverb_room_anvuew_sdr_13.7432.ckpt]
 [var:dereverb-vocal] -> noreverb-vocal[unzip:noreverb]
-[var:noreverb-vocal] -> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]
+[var:noreverb-vocal] -> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]{mix=vocal}
 [var:viridis-vocal] -> reverb-viridis-vocal[audio:reverb]
-[var:viridis-vocal] -> [mix:vocal]
 [var:band-roformer] -> bands[unzip:other.wav]
 [var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]
 [var:viridis-vocal, bands, harmony] -> result[audio:mix]
