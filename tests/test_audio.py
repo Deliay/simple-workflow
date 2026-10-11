@@ -44,13 +44,24 @@ def test_mono_downsamples_channels() -> None:
     assert samples.shape[1] == 1
 
 
-def test_mix_sums_inputs() -> None:
+def test_mix_balances_track_loudness() -> None:
     left = np.full((100, 1), 0.2, dtype=np.float32)
     right = np.full((50, 1), 0.1, dtype=np.float32)
     out = run(AudioTool(), ["mix", make_wav(left), make_wav(right)])
     samples, _ = read_wav(out)
     assert samples.shape[0] == 100
-    assert abs(float(samples[0, 0]) - 0.3) < 1e-3
+    # Each track is brought to TARGET_RMS before summing: the loud 0.2 track is
+    # attenuated and the quiet 0.1 track is left alone, so neither dominates.
+    assert abs(float(samples[0, 0]) - 2 * AudioTool.TARGET_RMS) < 1e-3
+    assert abs(float(samples[60, 0]) - AudioTool.TARGET_RMS) < 1e-3
+
+
+def test_mix_keeps_peak_under_ceiling() -> None:
+    tracks = [make_wav(np.full((100, 1), 0.5, dtype=np.float32)) for _ in range(20)]
+    out = run(AudioTool(), ["mix", *tracks])
+    samples, _ = read_wav(out)
+    assert float(np.max(np.abs(samples))) <= AudioTool.PEAK_CEILING + 1e-2
+    assert float(np.max(np.abs(samples))) > 0.0
 
 
 def test_reverb_preserves_length() -> None:
@@ -69,9 +80,10 @@ def test_mix_resamples_differing_rates() -> None:
     out = run(AudioTool(), ["mix", make_wav(slow, 8000), make_wav(fast, 16000)])
     samples, rate = read_wav(out)
     assert rate == 16000
-    # The 8 kHz stream is resampled up to 16 kHz -> 200 frames, matching.
+    # The 8 kHz stream is resampled up to 16 kHz -> 200 frames, matching, and
+    # both tracks are loudness-matched to TARGET_RMS before summing.
     assert samples.shape[0] == 200
-    assert abs(float(samples[0, 0]) - 0.3) < 1e-3
+    assert abs(float(samples[0, 0]) - 2 * AudioTool.TARGET_RMS) < 1e-3
 
 
 def test_mix_upmixes_mono_to_stereo() -> None:

@@ -5,7 +5,8 @@ standard library ``wave`` module and ``numpy``:
 
 * ``mono``   - down-mix every input to a single channel,
 * ``reverb`` - apply a lightweight FFT convolution reverb,
-* ``mix``    - sum several streams together and normalise the peaks,
+* ``mix``    - match every stream's loudness, then sum them, keeping the
+  result under the peak ceiling,
 * ``amp``    - automatic gain: RMS-normalise to a target loudness, with a
   peak ceiling as a fallback so the result never clips.
 """
@@ -139,27 +140,33 @@ class AudioTool(Tool):
 
         length = max(samples.shape[0] for samples in prepared)
         mixed = np.zeros((length, channels), dtype=np.float32)
+        # Match every track to the same loudness before summing so that a
+        # quiet stem is not buried by a loud one.
         for samples in prepared:
-            mixed[: samples.shape[0]] += samples
+            mixed[: samples.shape[0]] += samples * self._loudness_gain(samples)
         peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
-        if peak > 1.0:
-            mixed /= peak
+        if peak > self.PEAK_CEILING:
+            mixed *= self.PEAK_CEILING / peak
         return _encode_wav(mixed, rate)
 
-    def _amp(self, streams: list[bytes]) -> bytes:
-        samples, rate = _decode_wav(streams[0])
+    def _loudness_gain(self, samples: np.ndarray) -> float:
+        """Gain bringing ``samples`` to ``TARGET_RMS`` without clipping."""
         if samples.size == 0:
-            return _encode_wav(samples, rate)
+            return 1.0
         rms = float(np.sqrt(np.mean(np.square(samples))))
         if rms < self.SILENCE_FLOOR:
-            return _encode_wav(samples, rate)
+            return 1.0
         gain = self.TARGET_RMS / rms
         # Peak ceiling as a fallback: if the RMS gain would push a transient
         # past the ceiling, trade loudness for a clean, unclipped result.
         peak = float(np.max(np.abs(samples)))
-        if peak * gain > self.PEAK_CEILING:
+        if peak > 0.0 and peak * gain > self.PEAK_CEILING:
             gain = self.PEAK_CEILING / peak
-        return _encode_wav(samples * gain, rate)
+        return gain
+
+    def _amp(self, streams: list[bytes]) -> bytes:
+        samples, rate = _decode_wav(streams[0])
+        return _encode_wav(samples * self._loudness_gain(samples), rate)
 
     def _reverb(self, streams: list[bytes]) -> bytes:
         samples, rate = _decode_wav(streams[0])

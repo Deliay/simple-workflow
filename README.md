@@ -190,7 +190,7 @@ named voicebank such as `小松绿v1.1` and returns a WAV. Set
 
 - `mono` — down-mix to a single channel,
 - `reverb` — apply an FFT-convolution reverb,
-- `mix` — sum several streams and normalise peaks,
+- `mix` — match every stream's loudness (RMS), then sum them under the peak ceiling,
 - `amp` — automatic gain: RMS-normalise a stream to a target loudness, with a peak ceiling as a fallback (silence untouched).
 
 ## HTTP API
