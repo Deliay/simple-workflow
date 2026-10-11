@@ -7,7 +7,14 @@ import subprocess
 import numpy as np
 import pytest
 
-from simple_workflow.media import ensure_wav, ffmpeg_available, is_wav, to_wav, wav_info
+from simple_workflow.media import (
+    ensure_wav,
+    ffmpeg_available,
+    is_wav,
+    to_mp3,
+    to_wav,
+    wav_info,
+)
 
 from .test_audio import make_wav
 
@@ -56,3 +63,21 @@ def test_to_wav_decodes_aac() -> None:
     assert not is_wav(m4a)
     decoded = to_wav(m4a)
     assert is_wav(decoded)
+
+
+def test_mp3_requires_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
+    import simple_workflow.media as media
+    from simple_workflow.errors import ToolExecutionError
+
+    monkeypatch.setattr(media, "ffmpeg_available", lambda: False)
+    with pytest.raises(ToolExecutionError, match="ffmpeg"):
+        to_mp3(b"whatever")
+
+
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg is not installed")
+def test_to_mp3_encodes_and_decodes() -> None:
+    wav = make_wav(np.zeros((8000, 1), dtype=np.float32), 8000)
+    mp3 = to_mp3(wav)
+    assert mp3
+    assert not is_wav(mp3)
+    assert is_wav(to_wav(mp3))

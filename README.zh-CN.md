@@ -58,6 +58,8 @@ uv run simple-workflow serve
 | `[var:a, b, c]`                 | 把多个引用打包成一个多值输入                      |
 | `[input]` / `[input:name]`      | 读取工作流输入（text/number/binary）              |
 | `[final]` / `[output]`          | 终止汇点；其值即工作流结果                        |
+| `[file:name.mp4]`               | 给流入的值打上文件名标签（终结点）                |
+| `[!tool:arg]`                   | 开头的 `!` 表示该节点忽略缓存（见下文）           |
 
 `[var:a, b]` 与 `[var:a, var:b]` 等价 —— 每一项的 `var:` 前缀是可选的。
 
@@ -160,6 +162,7 @@ MIDI、USTX 与纯文本），并原样返回。第一个参数是**必填的 2 
 | 工具    | 签名                                          | 输出   |
 | ------- | --------------------------------------------- | ------ |
 | `unzip` | `(path: text, archive: binary) -> binary`     | binary |
+| `zip`   | `(...files: binary) -> binary`                | binary |
 | `audio` | `(op: text, ...inputs: binary) -> binary`     | binary |
 
 `audio` 支持的操作：
@@ -167,7 +170,22 @@ MIDI、USTX 与纯文本），并原样返回。第一个参数是**必填的 2 
 - `mono` —— 降混为单声道，
 - `reverb` —— 施加 FFT 卷积混响，
 - `mix` —— 先把各轨响度（RMS）对齐再相加，并保持在峰值上限内，
-- `amp` —— 自动增益：按 RMS 归一化到目标响度，并用峰值上限兜底（静音保持不变）。
+- `amp` —— 自动增益：按 RMS 归一化到目标响度，并用峰值上限兜底（静音保持不变），
+- `mp3` —— 通过 ffmpeg 编码为 MP3（ABR/VBR V0）。
+
+#### 用 `[file:name]` 与 `[zip]` 命名打包文件
+
+`[file:name]` 是一个**终结点**标签：它给流入的值命名，且必须是所在链的最后一个元素。
+`[zip]` 随后把所有带标签的变量打包成一个 zip，并用这些名字作为压缩包内的文件名。
+若某个 `zip` 输入没有 `[file:name]` 标签，则会报错。
+
+```text
+a[bv:test] -> [file:测试.mp4]
+b[bv:test2] -> [file:测试2.mp4]
+[var:a, var:b] -> [zip] -> [final]
+```
+
+会生成一个包含 `测试.mp4` 与 `测试2.mp4` 的 zip 包。
 
 ## HTTP API
 
@@ -242,6 +260,17 @@ TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference \
 `[input]` 节点会把运行期输入值的摘要纳入键，所以用不同输入重跑时，只有受影响的子树会失效。
 `DELETE /v1/cache` 会删除所有缓存条目。
 
+### 用 `!` 忽略缓存
+
+给节点加前缀 `!`（例如 `[!audio:mix]`）会把它标记为忽略缓存：它的结果既不读缓存也不写缓存。
+引擎会把一个每次运行都不同的令牌混入它的键，因此**该节点及其所有下游节点每次都会重新执行**，
+而上游未变化的前缀仍会被复用。修改了某个算法、担心旧缓存导致结果陈旧时使用它。
+
+```text
+[input:vocal] -> [audio:mono] -> [!audio:mix] -> [audio:mp3] -> [final]
+#                                  \__________ 每次都重新执行 __________/
+```
+
 缓存对象存放在 S3，带有 TTL（默认 **60 分钟**）；后台任务会定期清理过期对象。启用方式：
 
 ```bash
@@ -304,7 +333,7 @@ src/simple_workflow/
   types.py      # text/number/binary + 转换与 JSON 编解码
   tools/
     api.py      # HTTP 后端工具
-    local.py    # unzip + audio
+    local.py    # unzip + zip + audio
   api.py        # FastAPI 应用
   __main__.py   # CLI
 ```

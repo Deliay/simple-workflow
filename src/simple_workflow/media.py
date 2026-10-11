@@ -62,6 +62,34 @@ def to_wav(
     return process.stdout
 
 
+def to_mp3(data: bytes, *, quality: int = 0) -> bytes:
+    """Encode arbitrary audio bytes to MP3 (ABR/VBR quality ``quality``, V0)."""
+    if not ffmpeg_available():
+        raise ToolExecutionError(
+            "ffmpeg is required to encode mp3 but was not found on PATH"
+        )
+    command = [
+        _FFMPEG,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-codec:a",
+        "libmp3lame",
+        "-q:a",
+        str(quality),
+        "-f",
+        "mp3",
+        "pipe:1",
+    ]
+    process = subprocess.run(command, input=data, capture_output=True)
+    if process.returncode != 0 or not process.stdout:
+        detail = process.stderr.decode("utf-8", errors="replace")[:300]
+        raise ToolExecutionError(f"ffmpeg failed to encode mp3: {detail}")
+    return process.stdout
+
+
 def wav_info(data: bytes) -> tuple[int, int] | None:
     """Return ``(sample_rate, channels)`` for a WAV stream, else ``None``."""
     if not is_wav(data):

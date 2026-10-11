@@ -32,6 +32,22 @@ class ValueType(enum.StrEnum):
 MaybeType: TypeAlias = ValueType | None
 
 
+class Tagged(bytes):
+    """A binary value carrying the filename declared by a ``[file:name]`` tag.
+
+    It *is* a ``bytes`` instance (so every existing binary tool keeps working),
+    but also exposes ``filename`` so the ``zip`` tool can name the members of the
+    archive it builds.
+    """
+
+    filename: str
+
+    def __new__(cls, value: bytes, filename: str) -> Tagged:
+        instance = super().__new__(cls, value)
+        instance.filename = filename
+        return instance
+
+
 def type_name(t: MaybeType) -> str:
     return t.value if t is not None else "any"
 

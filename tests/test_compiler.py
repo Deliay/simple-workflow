@@ -70,3 +70,42 @@ def test_duplicate_variable_is_rejected(registry) -> None:  # noqa: ANN001
     script = "[bv:x] -> d[unzip:a]\n[bv:y] -> d[unzip:b]\n[var:d] -> [final]"
     with pytest.raises(WorkflowError, match="assigned more than once"):
         compile_script(script, registry)
+
+
+def test_bang_is_carried_onto_the_node(registry) -> None:  # noqa: ANN001
+    script = (
+        "[bv:x] -> [final]\n"
+        "[bv:y] -> out[!audio:mix]\n"
+        "[var:out] -> [final]"
+    )
+    plan = compile_script(script, registry)
+    bypassed = [node for node in plan.nodes.values() if node.no_cache]
+    assert len(bypassed) == 1
+    assert bypassed[0].tool_name == "audio"
+    assert bypassed[0].args == ["mix"]
+
+
+def test_file_tag_is_attached_to_producer(registry) -> None:  # noqa: ANN001
+    script = (
+        "a[bv:test] -> [file:测试.mp4]\n"
+        "[var:a] -> [final]"
+    )
+    plan = compile_script(script, registry)
+    tagged = [node for node in plan.nodes.values() if node.file_name]
+    assert [node.file_name for node in tagged] == ["测试.mp4"]
+    assert tagged[0].name == "a"
+
+
+def test_file_tag_must_be_last(registry) -> None:  # noqa: ANN001
+    with pytest.raises(WorkflowError, match="last element"):
+        compile_script("a[bv:x] -> [file:x.mp4] -> [final]", registry)
+
+
+def test_file_tag_needs_a_source(registry) -> None:  # noqa: ANN001
+    with pytest.raises(WorkflowError, match="value on its left"):
+        compile_script("[file:x.mp4]", registry)
+
+
+def test_file_tag_needs_a_named_source(registry) -> None:  # noqa: ANN001
+    with pytest.raises(WorkflowError, match="named node"):
+        compile_script("[bv:x] -> [file:x.mp4]", registry)

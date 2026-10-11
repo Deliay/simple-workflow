@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from simple_workflow import Param, Signature, Tool, ToolRegistry, ValueType
-from simple_workflow.tools import UnzipTool
+from simple_workflow.tools import UnzipTool, ZipTool
 
 TEXT = ValueType.TEXT
 BINARY = ValueType.BINARY
@@ -128,6 +128,7 @@ def build_stub_registry() -> ToolRegistry:
         )
     )
     registry.register(UnzipTool())
+    registry.register(ZipTool())
     return registry
 
 

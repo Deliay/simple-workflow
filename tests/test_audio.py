@@ -1,14 +1,18 @@
-"""Local audio tool tests (mono / mix / reverb / amp)."""
+"""Local audio tool tests (mono / mix / reverb / amp / mp3)."""
 
 from __future__ import annotations
 
 import asyncio
 import io
 import wave
+import zipfile
 
 import numpy as np
+import pytest
 
-from simple_workflow.tools import AudioTool
+from simple_workflow.media import ffmpeg_available
+from simple_workflow.tools import AudioTool, ZipTool
+from simple_workflow.types import Tagged
 
 
 def make_wav(samples: np.ndarray, rate: int = 8000) -> bytes:
@@ -130,9 +134,33 @@ def test_amp_leaves_silence_untouched() -> None:
 
 
 def test_unknown_operation() -> None:
-    import pytest
-
     from simple_workflow.errors import ToolExecutionError
 
     with pytest.raises(ToolExecutionError, match="unknown operation"):
         run(AudioTool(), ["bogus", make_wav(np.zeros((10, 1), dtype=np.float32))])
+
+
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg is not installed")
+def test_mp3_operation_encodes() -> None:
+    wav = make_wav(np.zeros((8000, 1), dtype=np.float32), 8000)
+    out = run(AudioTool(), ["mp3", wav])
+    assert out
+    assert not out.startswith(b"RIFF")
+
+
+def test_zip_packs_tagged_inputs() -> None:
+    out = run(
+        ZipTool(),
+        [Tagged(b"one", "a.txt"), Tagged(b"two", "b.txt")],
+    )
+    with zipfile.ZipFile(io.BytesIO(out)) as archive:
+        assert sorted(archive.namelist()) == ["a.txt", "b.txt"]
+        assert archive.read("a.txt") == b"one"
+        assert archive.read("b.txt") == b"two"
+
+
+def test_zip_requires_a_file_name() -> None:
+    from simple_workflow.errors import ToolExecutionError
+
+    with pytest.raises(ToolExecutionError, match="file:name"):
+        run(ZipTool(), [b"untagged"])

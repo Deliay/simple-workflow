@@ -178,7 +178,50 @@ def test_input_value_participates_in_key(registry) -> None:  # noqa: ANN001
 
 def test_registry_stub_tool_names(registry) -> None:  # noqa: ANN001
     # Guard the fixture used by the cache tests above.
-    assert set(build_stub_registry().names()) >= {"bv", "msst", "unzip", "audio"}
+    assert set(build_stub_registry().names()) >= {"bv", "msst", "unzip", "audio", "zip"}
+
+
+def test_cache_bypass_reexecutes_node_and_downstream(registry) -> None:  # noqa: ANN001
+    cache = MemoryStore(ttl=3600)
+    script = (
+        "[bv:ID] -> a[msst:m.ckpt]\n"
+        "[var:a] -> b[!audio:mix]\n"
+        "[var:b] -> c[audio:mono]\n"
+        "[var:c] -> [final]"
+    )
+    _run(script, registry, cache)
+    first = _tool_calls(registry)
+    _run(script, registry, cache)
+    # Only the bypassed node and its downstream consumer re-run; the cached
+    # upstream (bv, msst) is reused.
+    assert _tool_calls(registry) - first == 2
+
+
+def test_unchanged_chain_after_bypass_is_cached(registry) -> None:  # noqa: ANN001
+    cache = MemoryStore(ttl=3600)
+    normal = "[bv:ID] -> a[audio:mix]\n[var:a] -> [final]"
+    _run(normal, registry, cache)
+    first = _tool_calls(registry)
+    _run(normal, registry, cache)
+    assert _tool_calls(registry) == first  # fully cached
+
+
+def test_file_tag_survives_cache_roundtrip(registry) -> None:  # noqa: ANN001
+    import io
+    import zipfile
+
+    cache = MemoryStore(ttl=3600)
+    script = (
+        "a[bv:test] -> [file:测试.mp4]\n"
+        "b[bv:test2] -> [file:测试2.mp4]\n"
+        "[var:a, var:b] -> [zip] -> [final]"
+    )
+    first, _ = _run(script, registry, cache)
+    second, timings = _run(script, registry, cache)
+    assert first["final"] == second["final"]
+    assert any(result.cached for result in timings)
+    with zipfile.ZipFile(io.BytesIO(second["final"])) as archive:
+        assert archive.read("测试.mp4") == b"raw:test"
 
 
 # ---------------------------------------------------------------------------

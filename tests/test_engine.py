@@ -69,3 +69,27 @@ def test_input_type_mismatch_at_runtime(registry) -> None:  # noqa: ANN001
 
     with pytest.raises(InputError, match="expects binary"):
         _run(script, registry, {"data": InputValue(ValueType.TEXT, "nope")})
+
+
+def test_zip_packs_tagged_variables_by_filename(registry) -> None:  # noqa: ANN001
+    import io
+    import zipfile
+
+    script = (
+        "a[bv:test] -> [file:测试.mp4]\n"
+        "b[bv:test2] -> [file:测试2.mp4]\n"
+        "[var:a, var:b] -> [zip] -> [final]"
+    )
+    outputs, _ = _run(script, registry)
+    with zipfile.ZipFile(io.BytesIO(outputs["final"])) as archive:
+        assert archive.namelist() == ["测试.mp4", "测试2.mp4"]
+        assert archive.read("测试.mp4") == b"raw:test"
+        assert archive.read("测试2.mp4") == b"raw:test2"
+
+
+def test_zip_without_a_file_tag_raises(registry) -> None:  # noqa: ANN001
+    from simple_workflow.errors import ToolExecutionError
+
+    script = "a[bv:test]\nb[bv:test2]\n[var:a, var:b] -> [zip] -> [final]"
+    with pytest.raises(ToolExecutionError, match="file:name"):
+        _run(script, registry)

@@ -23,7 +23,14 @@ from .parser import parse_script
 from .registry import ToolRegistry, build_registry
 from .signature import Param, Signature
 from .tools import RunContext, Tool
-from .types import ValueType, decode_value, encode_value, infer_type, normalize
+from .types import (
+    Tagged,
+    ValueType,
+    decode_value,
+    encode_value,
+    infer_type,
+    normalize,
+)
 
 __version__ = "0.1.0"
 
@@ -41,6 +48,7 @@ __all__ = [
     "S3Store",
     "ScriptSyntaxError",
     "Signature",
+    "Tagged",
     "Tool",
     "ToolExecutionError",
     "ToolRegistry",

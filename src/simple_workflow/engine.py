@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,7 +24,7 @@ from .compiler import Node, Plan
 from .errors import InputError, ToolExecutionError
 from .registry import ToolRegistry
 from .tools.base import RunContext
-from .types import ValueType, infer_type, normalize, type_name
+from .types import Tagged, ValueType, infer_type, normalize, type_name
 
 
 @dataclass(slots=True)
@@ -52,6 +53,7 @@ class Executor:
         self.plan = plan
         self.registry = registry
         self.cache: CacheStore = cache if cache is not None else NullStore()
+        self._bypass_token = ""
 
     async def run(
         self,
@@ -59,6 +61,9 @@ class Executor:
         ctx: RunContext | None = None,
     ) -> tuple[dict[str, Any], list[NodeResult]]:
         ctx = ctx or RunContext()
+        # A per-run token mixed into the keys of cache-bypassing nodes so that
+        # they and everything downstream of them re-execute on every run.
+        self._bypass_token = uuid.uuid4().hex
         values: dict[str, list[Any]] = {}
         timings: list[NodeResult] = []
         keys: dict[str, str] = {}
@@ -124,23 +129,24 @@ class Executor:
             node,
             [keys[producer] for producer in node.incoming],
             input_value=input_value,
+            salt=self._bypass_token if node.no_cache else None,
         )
         keys[node_id] = key
 
-        if node.kind == "tool" and self.cache.enabled:
+        if node.kind == "tool" and not node.no_cache and self.cache.enabled:
             cached = await self.cache.get(key)
             if cached is not None:
                 value = decode_cached(cached, self._output_type(node))
                 return NodeResult(
                     node_id=node_id,
-                    value=[value],
+                    value=self._tag(node, [value]),
                     seconds=loop.time() - started,
                     cached=True,
                 )
 
         result = await self._execute(node, incoming, inputs, ctx)
 
-        if node.kind == "tool" and self.cache.enabled and result:
+        if node.kind == "tool" and not node.no_cache and self.cache.enabled and result:
             value_type = self._output_type(node, result[0])
             await self.cache.put(
                 key,
@@ -148,7 +154,18 @@ class Executor:
                 {"sw-type": value_type.value, "sw-created": str(int(time.time()))},
             )
 
-        return NodeResult(node_id=node_id, value=result, seconds=loop.time() - started)
+        return NodeResult(
+            node_id=node_id, value=self._tag(node, result), seconds=loop.time() - started
+        )
+
+    @staticmethod
+    def _tag(node: Node, values: list[Any]) -> list[Any]:
+        """Attach the ``[file:name]`` filename to a tagged node's output."""
+        if node.file_name and len(values) == 1:
+            value = values[0]
+            if isinstance(value, (bytes, bytearray, memoryview)):
+                return [Tagged(bytes(value), node.file_name)]
+        return values
 
     @staticmethod
     def _output_type(node: Node, value: Any = None) -> ValueType:

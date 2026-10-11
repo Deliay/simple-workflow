@@ -50,3 +50,26 @@ def test_sink_and_input() -> None:
 def test_empty_chain_element_rejected() -> None:
     with pytest.raises(ScriptSyntaxError):
         parse_script("[bv:x] -> -> [final]")
+
+
+def test_bang_marks_node_as_cache_bypassing() -> None:
+    element = parse_script("[!audio:mix] -> [final]")[0][0]
+    assert element.kind == "tool"
+    assert element.tool == "audio"
+    assert element.args == ["mix"]
+    assert element.no_cache is True
+    # A leading bang on a named node is also recognised.
+    named = parse_script("out[!audio:mp3] -> [final]")[0][0]
+    assert named.name == "out"
+    assert named.no_cache is True
+
+
+def test_file_tag_is_parsed() -> None:
+    element = parse_script("[var:x] -> [file:测试.mp4]")[0][1]
+    assert element.kind == "file"
+    assert element.file_name == "测试.mp4"
+
+
+def test_file_requires_a_name() -> None:
+    with pytest.raises(ScriptSyntaxError, match="file"):
+        parse_script("[var:x] -> [file:]")

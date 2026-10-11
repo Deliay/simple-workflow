@@ -12,6 +12,10 @@ Element shapes recognised inside a chain::
     [var:a, b, c]                     # bundle of references (multi-input)
     [input] / [input:name]            # read one of the API inputs
     [final] / [output] / [output:name]# terminal sink (workflow result)
+    [file:name.mp4]                   # tag the incoming value with a filename
+    [!audio:mix]                      # a leading ``!`` marks the node as
+                                      # cache-bypassing (it and its downstream
+                                      # subtree are always re-executed)
 """
 
 from __future__ import annotations
@@ -25,12 +29,12 @@ _ANON = re.compile(r"^\[\s*(.*?)\s*\]$", re.DOTALL)
 _NAMED = re.compile(r"^([^\[\]]+?)\s*\[(.*)\]$", re.DOTALL)
 
 #: Bracketed heads that are *not* tool calls.
-RESERVED = {"var", "input", "final", "output"}
+RESERVED = {"var", "input", "final", "output", "file"}
 
 
 @dataclass(slots=True)
 class Element:
-    kind: str  # "tool" | "ref" | "input" | "sink"
+    kind: str  # "tool" | "ref" | "input" | "sink" | "file"
     raw: str
     name: str | None = None
     tool: str | None = None
@@ -39,6 +43,8 @@ class Element:
     input_name: str | None = None
     sink_name: str | None = None
     sink_kind: str | None = None
+    file_name: str | None = None
+    no_cache: bool = False
 
 
 def parse_script(text: str) -> list[list[Element]]:
@@ -76,6 +82,10 @@ def parse_element(text: str) -> Element:
 
 
 def _parse_bracket(inner: str, *, name: str | None, raw: str) -> Element:
+    no_cache = False
+    if inner.startswith("!"):
+        no_cache = True
+        inner = inner[1:].strip()
     if not inner:
         raise ScriptSyntaxError(f"empty element: {raw!r}")
     head, _, rest = inner.partition(":")
@@ -86,9 +96,11 @@ def _parse_bracket(inner: str, *, name: str | None, raw: str) -> Element:
         refs = [_strip_var(item) for item in _split_commas(rest)]
         if not refs:
             raise ScriptSyntaxError(f"empty [var] reference: {raw!r}")
-        return Element(kind="ref", raw=raw, name=name, refs=refs)
+        return Element(kind="ref", raw=raw, name=name, refs=refs, no_cache=no_cache)
     if head == "input":
-        return Element(kind="input", raw=raw, name=name, input_name=rest or "input")
+        return Element(
+            kind="input", raw=raw, name=name, input_name=rest or "input", no_cache=no_cache
+        )
     if head in ("final", "output"):
         return Element(
             kind="sink",
@@ -96,10 +108,20 @@ def _parse_bracket(inner: str, *, name: str | None, raw: str) -> Element:
             name=name,
             sink_kind=head,
             sink_name=rest or None,
+            no_cache=no_cache,
+        )
+    if head == "file":
+        if not rest:
+            raise ScriptSyntaxError(f"[file] requires a name: {raw!r}")
+        return Element(
+            kind="file", raw=raw, name=name, file_name=rest, no_cache=no_cache
         )
 
     # Anything else is a tool call.
-    return Element(kind="tool", raw=raw, name=name, tool=head, args=_split_commas(rest))
+    return Element(
+        kind="tool", raw=raw, name=name, tool=head, args=_split_commas(rest),
+        no_cache=no_cache,
+    )
 
 
 def _strip_var(item: str) -> str:

@@ -1,4 +1,4 @@
-"""Local (in-process) tools: ``unzip`` and ``audio``.
+"""Local (in-process) tools: ``unzip``, ``zip`` and ``audio``.
 
 ``audio`` implements several operations on 16-bit PCM WAV data using only the
 standard library ``wave`` module and ``numpy``:
@@ -8,7 +8,11 @@ standard library ``wave`` module and ``numpy``:
 * ``mix``    - match every stream's loudness, then sum them, keeping the
   result under the peak ceiling,
 * ``amp``    - automatic gain: RMS-normalise to a target loudness, with a
-  peak ceiling as a fallback so the result never clips.
+  peak ceiling as a fallback so the result never clips,
+* ``mp3``    - encode the input to MP3 (ABR/VBR V0) through ffmpeg.
+
+``zip`` packs every input into a single archive.  Each input must have been
+tagged with a ``[file:name]`` node, which supplies the member's filename.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from typing import Any
 import numpy as np
 
 from ..errors import ToolExecutionError
-from ..media import to_wav
+from ..media import to_mp3, to_wav
 from ..signature import Param, Signature
 from ..types import ValueType
 from .base import RunContext, Tool
@@ -76,6 +80,28 @@ def _find_member(names: list[str], wanted: str) -> str | None:
     return None
 
 
+class ZipTool(Tool):
+    def __init__(self) -> None:
+        super().__init__(
+            "zip",
+            Signature(variadic=Param("files", _BINARY), output=_BINARY),
+        )
+
+    async def run(self, params: list[Any], ctx: RunContext) -> bytes:  # noqa: ANN401
+        if not params:
+            raise ToolExecutionError("zip: requires at least one input")
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for index, value in enumerate(params):
+                filename = getattr(value, "filename", None)
+                if not filename:
+                    raise ToolExecutionError(
+                        f"zip: input {index + 1} has no [file:name] tag"
+                    )
+                archive.writestr(str(filename), bytes(value))
+        return buffer.getvalue()
+
+
 class AudioTool(Tool):
     HOP = 0.5  # seconds of reverb tail
     TARGET_RMS = 0.1  # target RMS amplitude for ``amp`` (~ -20 dBFS)
@@ -106,6 +132,8 @@ class AudioTool(Tool):
                 return self._mix(streams)
             if op == "amp":
                 return self._amp(streams)
+            if op == "mp3":
+                return self._mp3(streams)
             if op in ("decode", "to-wav", "wav"):
                 return self._decode(streams)
         except ToolExecutionError:
@@ -113,11 +141,15 @@ class AudioTool(Tool):
         except Exception as exc:  # noqa: BLE001
             raise ToolExecutionError(f"audio:{op} failed: {exc}") from exc
         raise ToolExecutionError(
-            f"audio: unknown operation {op!r} (expected one of: mono, reverb, mix, amp, decode)"
+            f"audio: unknown operation {op!r} "
+            "(expected one of: mono, reverb, mix, amp, mp3, decode)"
         )
 
     def _decode(self, streams: list[bytes]) -> bytes:
         return to_wav(streams[0])
+
+    def _mp3(self, streams: list[bytes]) -> bytes:
+        return to_mp3(streams[0])
 
     def _mono(self, streams: list[bytes]) -> bytes:
         samples, rate = _decode_wav(streams[0])
@@ -264,4 +296,4 @@ def _fft_convolve(signal: np.ndarray, impulse: np.ndarray) -> np.ndarray:
 
 
 def local_tools() -> list[Tool]:
-    return [UnzipTool(), AudioTool()]
+    return [UnzipTool(), ZipTool(), AudioTool()]

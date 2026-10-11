@@ -43,6 +43,8 @@ class Node:
     incoming: list[str] = field(default_factory=list)
     output_types: tuple[MaybeType, ...] = ()
     errors: list[str] = field(default_factory=list)
+    no_cache: bool = False
+    file_name: str | None = None
 
     @property
     def width(self) -> int:
@@ -71,6 +73,7 @@ class Plan:
                     "refs": node.refs,
                     "inputs": node.incoming,
                     "output_types": [type_name(t) for t in node.output_types],
+                    "no_cache": node.no_cache,
                 }
             )
         return {
@@ -88,6 +91,7 @@ class _Builder:
         self.input_types: dict[str, ValueType | None] = dict(input_types or {})
         self.nodes: dict[str, Node] = {}
         self.symbols: dict[str, str] = {}
+        self.file_tags: dict[str, str] = {}
         self.creation_order: list[str] = []
         self._counter = 0
 
@@ -105,10 +109,19 @@ class _Builder:
         for statement in statements:
             self._build_statement(statement)
         self._resolve_refs()
+        self._apply_file_tags()
 
     def _build_statement(self, elements: list[Element]) -> None:
         ids: list[str] = []
         for index, element in enumerate(elements):
+            if element.kind == "file":
+                if index != len(elements) - 1:
+                    raise WorkflowError(
+                        f"{element.raw!r}: a [file:...] tag must be the last "
+                        "element of a chain"
+                    )
+                self._record_file_tag(elements[:index], element)
+                break
             if index > 0 and element.kind in ("ref", "input"):
                 raise WorkflowError(
                     f"{element.raw!r} cannot consume an upstream value; only a "
@@ -118,6 +131,34 @@ class _Builder:
             ids.append(node.id)
         for producer, consumer in zip(ids, ids[1:], strict=False):
             self.nodes[consumer].incoming.append(producer)
+
+    def _record_file_tag(self, predecessors: list[Element], element: Element) -> None:
+        """Associate ``[file:name]`` with the variable it tags."""
+        if not predecessors:
+            raise WorkflowError(
+                f"{element.raw!r}: a [file:...] tag needs a value on its left"
+            )
+        previous = predecessors[-1]
+        symbol: str | None = None
+        if previous.kind == "tool" and previous.name:
+            symbol = previous.name
+        elif previous.kind == "ref" and len(previous.refs) == 1:
+            symbol = previous.refs[0]
+        if symbol is None:
+            raise WorkflowError(
+                f"{element.raw!r}: a [file:...] tag must follow a named node or "
+                "a single [var:...] reference"
+            )
+        self.file_tags[symbol] = element.file_name or ""
+
+    def _apply_file_tags(self) -> None:
+        for symbol, filename in self.file_tags.items():
+            producer = self.symbols.get(symbol)
+            if producer is None:
+                raise WorkflowError(
+                    f"[file:{filename}]: undefined variable {symbol!r}"
+                )
+            self.nodes[producer].file_name = filename
 
     def _make_node(self, element: Element) -> Node:
         seq = self._counter
@@ -159,9 +200,10 @@ class _Builder:
                 sink_name=element.sink_name,
                 sink_kind=element.sink_kind,
             )
-        else:  # pragma: no cover - parser only emits the four kinds
+        else:  # pragma: no cover - the parser only emits the kinds handled above
             raise WorkflowError(f"unknown element kind: {element.kind!r}")
 
+        node.no_cache = element.no_cache
         self._add(node)
         if element.name and element.kind in ("tool", "input"):
             if element.name in self.symbols:

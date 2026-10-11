@@ -28,7 +28,7 @@ result, and then executes the surviving nodes concurrently.
   longest unchanged prefix of the pipeline.
 - **Two tool classes**:
   - *API tools* (`bv`, `msst`, `rvc`, `v2m`, `svs`) — `POST` form to an external HTTP service.
-  - *Local tools* (`unzip`, `audio`) — implemented in-process.
+  - *Local tools* (`unzip`, `zip`, `audio`) — implemented in-process.
 - HTTP API (FastAPI) and a small CLI, packaged with [uv](https://docs.astral.sh/uv/)
   and shipped as a Docker image.
 
@@ -67,6 +67,8 @@ A value's type travels with it along every edge and is checked at compile time.
 | `[var:a, b, c]`                 | bundle several references into a multi-value input        |
 | `[input]` / `[input:name]`      | read a workflow input (text/number/binary)                |
 | `[final]` / `[output]`          | terminal sink; its value is a workflow result             |
+| `[file:name.mp4]`               | tag the incoming value with a filename (terminal)         |
+| `[!tool:arg]`                   | a leading `!` bypasses the node's cache (see below)       |
 
 `[var:a, b]` and `[var:a, var:b]` are equivalent — the `var:` prefix is optional
 on the individual items.
@@ -184,6 +186,7 @@ named voicebank such as `小松绿v1.1` and returns a WAV. Set
 | Tool    | Signature                                    | Output |
 | ------- | -------------------------------------------- | ------ |
 | `unzip` | `(path: text, archive: binary) -> binary`     | binary |
+| `zip`   | `(...files: binary) -> binary`                | binary |
 | `audio` | `(op: text, ...inputs: binary) -> binary`     | binary |
 
 `audio` operations:
@@ -191,7 +194,23 @@ named voicebank such as `小松绿v1.1` and returns a WAV. Set
 - `mono` — down-mix to a single channel,
 - `reverb` — apply an FFT-convolution reverb,
 - `mix` — match every stream's loudness (RMS), then sum them under the peak ceiling,
-- `amp` — automatic gain: RMS-normalise a stream to a target loudness, with a peak ceiling as a fallback (silence untouched).
+- `amp` — automatic gain: RMS-normalise a stream to a target loudness, with a peak ceiling as a fallback (silence untouched),
+- `mp3` — encode the input to MP3 (ABR/VBR V0) through ffmpeg.
+
+#### Naming bundled files with `[file:name]` and `[zip]`
+
+`[file:name]` is a **terminal** tag: it names the value flowing into it and must
+be the last element of its chain. `[zip]` then packs every tagged variable into a
+single archive, using those names as members. A `zip` input without a
+`[file:name]` tag is an error.
+
+```text
+a[bv:test] -> [file:测试.mp4]
+b[bv:test2] -> [file:测试2.mp4]
+[var:a, var:b] -> [zip] -> [final]
+```
+
+produces a zip containing `测试.mp4` and `测试2.mp4`.
 
 ## HTTP API
 
@@ -269,6 +288,19 @@ the keys nest as follows:
 workflow with different inputs invalidates exactly the affected subtree.
 `DELETE /v1/cache` removes every entry.
 
+### Bypassing the cache with `!`
+
+Prefixing a node with `!` (e.g. `[!audio:mix]`) marks it as cache-bypassing: it
+is never read from or written to the cache. A run-specific token is mixed into
+its key, so **the node and everything downstream of it always re-execute** while
+the unchanged prefix upstream is still reused. Use it after changing an
+algorithm whose result would otherwise be served from a stale cache entry.
+
+```text
+[input:vocal] -> [audio:mono] -> [!audio:mix] -> [audio:mp3] -> [final]
+#                                  \__________ re-runs every time __________/
+```
+
 Entries are stored in S3 and expire after a TTL (default **60 minutes**); a
 background task periodically evicts stale objects. Enable the cache with:
 
@@ -334,7 +366,7 @@ src/simple_workflow/
   types.py      # text/number/binary + coercion & JSON codecs
   tools/
     api.py      # HTTP-backed tools
-    local.py    # unzip + audio
+    local.py    # unzip + zip + audio
   api.py        # FastAPI app
   __main__.py   # CLI
 ```

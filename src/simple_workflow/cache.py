@@ -91,20 +91,27 @@ def node_cache_key(
     parent_keys: list[str],
     *,
     input_value: Any = None,  # noqa: ANN401 - any of the three value types
+    salt: str | None = None,
 ) -> str:
     """Derive the layered cache key for ``node``.
 
     ``parent_keys`` are the keys of the nodes feeding this one, in edge order.
     ``input_value`` is only used for ``input`` nodes, where the run-time input
-    participates in the key.
+    participates in the key.  ``salt`` mixes an extra, run-specific token into
+    the key; the engine uses it for cache-bypassing nodes so that they and their
+    downstream subtree always miss and re-execute.
     """
     if node.kind == "input":
-        return _hash_parts("input", node.input_name or "input", digest_value(input_value))
-    if node.kind == "ref":
-        return _hash_parts("ref", *parent_keys)
-    if node.kind == "tool":
-        return _hash_parts("tool", node.tool_name or "", *node.args, *parent_keys)
-    return _hash_parts("sink", *parent_keys)
+        parts = ["input", node.input_name or "input", digest_value(input_value)]
+    elif node.kind == "ref":
+        parts = ["ref", *parent_keys]
+    elif node.kind == "tool":
+        parts = ["tool", node.tool_name or "", *node.args, *parent_keys]
+    else:
+        parts = ["sink", *parent_keys]
+    if salt is not None:
+        parts.append(salt)
+    return _hash_parts(*parts)
 
 
 # ---------------------------------------------------------------------------
