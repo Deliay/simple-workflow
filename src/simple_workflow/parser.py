@@ -13,12 +13,19 @@ Element shapes recognised inside a chain::
     [input] / [input:name]            # read one of the API inputs
     [final] / [output] / [output:name]# terminal sink (workflow result)
     name[tool:arg]{file=x.mp4}        # ``{key=value}`` tags on a value producer
+    [[bv:1], [bv:2]]                  # inline bundle of several producers
     [!audio:mix]                      # a leading ``!`` marks the node as
                                       # cache-bypassing (it and its downstream
                                       # subtree are always re-executed)
 
 Tags are written after the node that produces the value: ``file=NAME`` names it
 for ``zip`` and ``mix=ROLE`` assigns its role (e.g. ``vocal``) for ``mix``.
+
+An inline bundle groups several value producers (each written in its own
+brackets) into one multi-value input, so a downstream tool receives all of them
+in order::
+
+    [[bv:1]{file=1.mp4}, [bv:2]{file=2.mp3}] -> [zip] -> [final]
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ RESERVED = {"var", "input", "final", "output"}
 
 @dataclass(slots=True)
 class Element:
-    kind: str  # "tool" | "ref" | "input" | "sink"
+    kind: str  # "tool" | "ref" | "input" | "sink" | "bundle"
     raw: str
     name: str | None = None
     tool: str | None = None
@@ -49,6 +56,7 @@ class Element:
     sink_kind: str | None = None
     no_cache: bool = False
     tags: dict[str, str] = field(default_factory=dict)
+    items: list[Element] = field(default_factory=list)
 
 
 def parse_script(text: str) -> list[list[Element]]:
@@ -77,19 +85,60 @@ def parse_element(text: str) -> Element:
 
     match = _ANON.match(core)
     if match:
-        element = _parse_bracket(match.group(1).strip(), name=None, raw=original)
+        inner = match.group(1).strip()
+        if _is_bundle(inner):
+            element = _parse_bundle(inner, name=None, raw=original)
+        else:
+            element = _parse_bracket(inner, name=None, raw=original)
     else:
         match = _NAMED.match(core)
         if match:
             name = match.group(1).strip()
             if not name:
                 raise ScriptSyntaxError(f"missing node name in {original!r}")
-            element = _parse_bracket(match.group(2).strip(), name=name, raw=original)
+            inner = match.group(2).strip()
+            if _is_bundle(inner):
+                element = _parse_bundle(inner, name=name, raw=original)
+            else:
+                element = _parse_bracket(inner, name=name, raw=original)
         else:
             # Bare identifier: shorthand for a variable reference.
             element = Element(kind="ref", raw=original, refs=[core])
     element.tags = tags
     return element
+
+
+def _is_bundle(inner: str) -> bool:
+    items = _split_items(inner)
+    return len(items) >= 2 and any("[" in item for item in items)
+
+
+def _parse_bundle(inner: str, *, name: str | None, raw: str) -> Element:
+    items = _split_items(inner)
+    if any(not item for item in items):
+        raise ScriptSyntaxError(f"empty item in bundle: {raw!r}")
+    return Element(
+        kind="bundle", raw=raw, name=name, items=[parse_element(item) for item in items]
+    )
+
+
+def _split_items(inner: str) -> list[str]:
+    """Split on top-level commas, ignoring those inside ``[]`` / ``{}``."""
+    items: list[str] = []
+    depth = 0
+    current = ""
+    for char in inner:
+        if char == "," and depth == 0:
+            items.append(current.strip())
+            current = ""
+            continue
+        if char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+        current += char
+    items.append(current.strip())
+    return items
 
 
 def _split_tags(text: str) -> tuple[str, dict[str, str]]:

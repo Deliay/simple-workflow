@@ -87,3 +87,20 @@ def test_old_tag_syntax_is_rejected() -> None:
     for script in ("[var:x] -> [file:y]", "[var:x] -> [mix:vocal]"):
         with pytest.raises(ScriptSyntaxError, match="no longer valid"):
             parse_script(script)
+
+
+def test_inline_bundle_is_parsed() -> None:
+    element = parse_script("[[bv:1]{file=1.mp4}, [bv:2]{file=2.mp3}] -> [zip]")[0][0]
+    assert element.kind == "bundle"
+    assert [item.tool for item in element.items] == ["bv", "bv"]
+    assert [item.tags for item in element.items] == [
+        {"file": "1.mp4"},
+        {"file": "2.mp3"},
+    ]
+
+
+def test_bundle_items_keep_commas_inside_args() -> None:
+    element = parse_script("[[audio:mono,reverb], [audio:amp]] -> [zip]")[0][0]
+    assert element.kind == "bundle"
+    assert element.items[0].tool == "audio"
+    assert element.items[0].args == ["mono", "reverb"]

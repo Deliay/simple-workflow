@@ -95,6 +95,38 @@ def test_zip_without_a_file_tag_raises(registry) -> None:  # noqa: ANN001
         _run(script, registry)
 
 
+def test_inline_bundle_feeds_zip(registry) -> None:  # noqa: ANN001
+    import io
+    import zipfile
+
+    script = "[[bv:1]{file=1.mp4}, [bv:2]{file=2.mp3}] -> [zip] -> [final]"
+    outputs, _ = _run(script, registry)
+    with zipfile.ZipFile(io.BytesIO(outputs["final"])) as archive:
+        assert archive.namelist() == ["1.mp4", "2.mp3"]
+        assert archive.read("1.mp4") == b"raw:1"
+        assert archive.read("2.mp3") == b"raw:2"
+
+
+def test_inline_bundle_can_mix_refs_and_producers(registry) -> None:  # noqa: ANN001
+    import io
+    import zipfile
+
+    script = (
+        "old[bv:old]{file=old.mp4}\n"
+        "[[bv:new]{file=new.mp4}, [var:old]] -> [zip] -> [final]"
+    )
+    outputs, _ = _run(script, registry)
+    with zipfile.ZipFile(io.BytesIO(outputs["final"])) as archive:
+        assert archive.namelist() == ["new.mp4", "old.mp4"]
+
+
+def test_bundle_cannot_consume_upstream(registry) -> None:  # noqa: ANN001
+    from simple_workflow.errors import WorkflowError
+
+    with pytest.raises(WorkflowError, match="cannot consume"):
+        compile_script("[bv:x] -> [[bv:y], [bv:z]] -> [final]", registry)
+
+
 def test_mix_vocal_tag_reaches_the_tool() -> None:
     from simple_workflow import Param, Signature, Tool, ToolRegistry
 

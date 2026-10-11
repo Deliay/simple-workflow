@@ -85,6 +85,16 @@ a[bv:ID]{file=clip.mp4,mix=vocal} -> b[audio:amp]{file=loud.wav}
 [var:a, var:b] -> [zip] -> [final]
 ```
 
+### Inline bundles
+
+Wrap several producers in an outer `[...]` — each item in its own brackets — to
+feed them to the next node as one multi-value input. Items may carry their own
+tags, and may be references or nested bundles:
+
+```text
+[[bv:1]{file=1.mp4}, [bv:2]{file=2.mp3}] -> [zip] -> [final]
+```
+
 ### The arrow `->`
 
 `A -> B` feeds the output of `A` into `B`. Concretely, the value (or values, if

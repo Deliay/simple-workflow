@@ -114,7 +114,7 @@ class _Builder:
     def _build_statement(self, elements: list[Element]) -> None:
         ids: list[str] = []
         for index, element in enumerate(elements):
-            if index > 0 and element.kind in ("ref", "input"):
+            if index > 0 and element.kind in ("ref", "input", "bundle"):
                 raise WorkflowError(
                     f"{element.raw!r} cannot consume an upstream value; only a "
                     "tool call or a [final]/[output] sink may appear after '->'"
@@ -153,6 +153,19 @@ class _Builder:
                 tool_name=element.tool,
                 args=list(element.args),
             )
+        elif element.kind == "bundle":
+            # Build the item nodes first, then group them into a "ref"-like node
+            # whose output is the concatenation of theirs.
+            child_ids = [self._make_node(item).id for item in element.items]
+            seq = self._counter
+            node = Node(
+                id=self._new_id("bundle"),
+                seq=seq,
+                kind="ref",
+                raw=element.raw,
+                name=element.name,
+            )
+            node.incoming = child_ids
         elif element.kind == "ref":
             node = Node(
                 id=self._new_id("ref"),
@@ -187,7 +200,7 @@ class _Builder:
         node.no_cache = element.no_cache
         self._apply_element_tags(node, element)
         self._add(node)
-        if element.name and element.kind in ("tool", "input"):
+        if element.name and element.kind in ("tool", "input", "bundle"):
             if element.name in self.symbols:
                 raise WorkflowError(f"variable {element.name!r} is assigned more than once")
             self.symbols[element.name] = node.id
