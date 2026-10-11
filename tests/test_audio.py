@@ -114,6 +114,49 @@ def test_mix_upmixes_mono_to_stereo() -> None:
     assert samples.shape[1] == 2
 
 
+def test_mix_lifts_vocal_role() -> None:
+    signal = np.full((400, 1), 0.2, dtype=np.float32)
+    plain = read_wav(run(AudioTool(), ["mix", make_wav(signal)]))[0]
+    lifted = read_wav(
+        run(AudioTool(), ["mix", Tagged(make_wav(signal), role="vocal")])
+    )[0]
+    ratio = float(np.max(np.abs(lifted))) / float(np.max(np.abs(plain)))
+    assert abs(ratio - AudioTool.MIX_VOCAL_GAIN) < 0.02
+
+
+def test_mix_duck_gain_dips_under_vocal() -> None:
+    tool = AudioTool()
+    vocal = np.zeros((2000, 1), dtype=np.float32)
+    vocal[:1000, 0] = tool.TARGET_RMS * tool.MIX_VOCAL_GAIN
+    duck = tool._duck_gain(vocal, rate=8000)
+    # The backing is lowered while the vocal sounds and recovers when it stops.
+    assert float(duck[:900].mean()) < 1.0 - AudioTool.MIX_DUCK_DEPTH / 2
+    assert float(duck[1100:].mean()) > 0.99
+    assert float(duck[:900].mean()) < float(duck[1100:].mean())
+
+
+def test_mix_emphasises_vocal_over_backing() -> None:
+    rate = 8000
+    vocal = np.zeros((4000, 1), dtype=np.float32)
+    vocal[:2000, 0] = 0.3
+    backing = np.full((4000, 1), 0.2, dtype=np.float32)
+    out = read_wav(
+        run(
+            AudioTool(),
+            ["mix", Tagged(make_wav(vocal, rate), role="vocal"), make_wav(backing, rate)],
+        )
+    )[0]
+    # While the vocal is present it dominates; afterwards only backing remains.
+    assert abs(float(out[500, 0])) > abs(float(out[3500, 0])) * 2
+
+
+def test_mix_without_a_vocal_tag_is_unchanged() -> None:
+    left = np.full((100, 1), 0.2, dtype=np.float32)
+    right = np.full((100, 1), 0.1, dtype=np.float32)
+    out = read_wav(run(AudioTool(), ["mix", make_wav(left), make_wav(right)]))[0]
+    assert abs(float(out[0, 0]) - 2 * AudioTool.TARGET_RMS) < 1e-3
+
+
 def test_amp_normalises_rms() -> None:
     quiet = np.full((100, 1), 0.25, dtype=np.float32)
     out = run(AudioTool(), ["amp", make_wav(quiet)])

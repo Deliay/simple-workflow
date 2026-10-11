@@ -93,3 +93,30 @@ def test_zip_without_a_file_tag_raises(registry) -> None:  # noqa: ANN001
     script = "a[bv:test]\nb[bv:test2]\n[var:a, var:b] -> [zip] -> [final]"
     with pytest.raises(ToolExecutionError, match="file:name"):
         _run(script, registry)
+
+
+def test_mix_vocal_tag_reaches_the_tool() -> None:
+    from simple_workflow import Param, Signature, Tool, ToolRegistry
+
+    seen: dict[str, object] = {}
+
+    class Spy(Tool):
+        def __init__(self) -> None:
+            super().__init__(
+                "audio",
+                Signature(
+                    params=(Param("op", ValueType.TEXT),),
+                    variadic=Param("inputs", ValueType.BINARY),
+                    output=ValueType.BINARY,
+                ),
+            )
+
+        async def run(self, params, ctx):  # noqa: ANN001, ANN201
+            seen["roles"] = [getattr(p, "role", None) for p in params[1:]]
+            return b"ok"
+
+    spy_registry = ToolRegistry()
+    spy_registry.register(Spy())
+    script = "v[input:vocal] -> [mix:vocal]\n[var:v] -> [audio:mix] -> [final]"
+    _run(script, spy_registry, {"vocal": InputValue(ValueType.BINARY, b"\x00")})
+    assert seen["roles"] == ["vocal"]

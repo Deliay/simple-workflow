@@ -73,3 +73,14 @@ def test_file_tag_is_parsed() -> None:
 def test_file_requires_a_name() -> None:
     with pytest.raises(ScriptSyntaxError, match="file"):
         parse_script("[var:x] -> [file:]")
+
+
+def test_mix_role_tag_is_parsed() -> None:
+    element = parse_script("[var:x] -> [mix:vocal]")[0][1]
+    assert element.kind == "mix"
+    assert element.mix_role == "vocal"
+
+
+def test_mix_requires_a_role() -> None:
+    with pytest.raises(ScriptSyntaxError, match="mix"):
+        parse_script("[var:x] -> [mix]")

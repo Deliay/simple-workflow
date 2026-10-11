@@ -13,6 +13,7 @@ Element shapes recognised inside a chain::
     [input] / [input:name]            # read one of the API inputs
     [final] / [output] / [output:name]# terminal sink (workflow result)
     [file:name.mp4]                   # tag the incoming value with a filename
+    [mix:vocal]                       # tag the incoming value with a mix role
     [!audio:mix]                      # a leading ``!`` marks the node as
                                       # cache-bypassing (it and its downstream
                                       # subtree are always re-executed)
@@ -29,12 +30,12 @@ _ANON = re.compile(r"^\[\s*(.*?)\s*\]$", re.DOTALL)
 _NAMED = re.compile(r"^([^\[\]]+?)\s*\[(.*)\]$", re.DOTALL)
 
 #: Bracketed heads that are *not* tool calls.
-RESERVED = {"var", "input", "final", "output", "file"}
+RESERVED = {"var", "input", "final", "output", "file", "mix"}
 
 
 @dataclass(slots=True)
 class Element:
-    kind: str  # "tool" | "ref" | "input" | "sink" | "file"
+    kind: str  # "tool" | "ref" | "input" | "sink" | "file" | "mix"
     raw: str
     name: str | None = None
     tool: str | None = None
@@ -44,6 +45,7 @@ class Element:
     sink_name: str | None = None
     sink_kind: str | None = None
     file_name: str | None = None
+    mix_role: str | None = None
     no_cache: bool = False
 
 
@@ -115,6 +117,14 @@ def _parse_bracket(inner: str, *, name: str | None, raw: str) -> Element:
             raise ScriptSyntaxError(f"[file] requires a name: {raw!r}")
         return Element(
             kind="file", raw=raw, name=name, file_name=rest, no_cache=no_cache
+        )
+    if head == "mix":
+        if not rest:
+            raise ScriptSyntaxError(
+                f"[mix] requires a role, e.g. [mix:vocal]: {raw!r}"
+            )
+        return Element(
+            kind="mix", raw=raw, name=name, mix_role=rest, no_cache=no_cache
         )
 
     # Anything else is a tool call.

@@ -6,8 +6,9 @@ standard library ``wave`` module and ``numpy``:
 * ``mono``   - down-mix every input to a single channel,
 * ``reverb`` - apply a short, damped, dry-dominant convolution reverb tuned
   for pop material (pre-delay, high-frequency damping, rumble high-pass),
-* ``mix``    - match every stream's loudness, then sum them, keeping the
-  result under the peak ceiling,
+* ``mix``    - match every stream's loudness, then sum them. Tracks tagged with
+  ``[mix:vocal]`` are treated as vocals: they are lifted and the backing is
+  side-chain ducked under them,
 * ``amp``    - automatic gain: RMS-normalise to a target loudness, with a
   peak ceiling as a fallback so the result never clips,
 * ``mp3``    - encode the input to MP3 (ABR/VBR V0) through ffmpeg.
@@ -115,6 +116,11 @@ class AudioTool(Tool):
     REVERB_HIGHPASS_HZ = 150.0  # remove rumble that would muddy the mix
     REVERB_DRY = 0.9  # dry signal level
     REVERB_WET = 0.25  # reverb level, well below the dry signal
+    # ``mix`` roles: ``[mix:vocal]`` tracks lead, everything else is backing.
+    MIX_VOCAL_GAIN = 1.5  # lift vocals (~ +3.5 dB)
+    MIX_BACKING_GAIN = 0.85  # tuck the backing down (~ -1.4 dB)
+    MIX_DUCK_DEPTH = 0.4  # backing dips up to ~ -4.4 dB under the vocal
+    MIX_DUCK_WINDOW = 0.03  # envelope window in seconds for the duck
 
     def __init__(self) -> None:
         super().__init__(
@@ -128,7 +134,9 @@ class AudioTool(Tool):
 
     async def run(self, params: list[Any], ctx: RunContext) -> bytes:  # noqa: ANN401
         op = str(params[0])
-        streams = [bytes(p) for p in params[1:]]
+        raw = list(params[1:])
+        streams = [bytes(p) for p in raw]
+        roles = [getattr(p, "role", None) for p in raw]
         if not streams:
             raise ToolExecutionError(f"audio:{op} requires at least one input stream")
         try:
@@ -137,7 +145,7 @@ class AudioTool(Tool):
             if op == "reverb":
                 return self._reverb(streams)
             if op == "mix":
-                return self._mix(streams)
+                return self._mix(streams, roles)
             if op == "amp":
                 return self._amp(streams)
             if op == "mp3":
@@ -164,7 +172,10 @@ class AudioTool(Tool):
         mono = samples.mean(axis=1, keepdims=True)
         return _encode_wav(mono, rate)
 
-    def _mix(self, streams: list[bytes]) -> bytes:
+    def _mix(
+        self, streams: list[bytes], roles: list[str | None] | None = None
+    ) -> bytes:
+        roles = list(roles) if roles is not None else [None] * len(streams)
         decoded = [_decode_wav(s) for s in streams]
         rate = max(stream_rate for _, stream_rate in decoded)
         channels = max(samples.shape[1] for samples, _ in decoded)
@@ -178,16 +189,42 @@ class AudioTool(Tool):
                     aligned = np.pad(aligned, ((0, 0), (0, channels - aligned.shape[1])))
             prepared.append(aligned)
 
+        # Tracks tagged with ``[mix:vocal]`` become the lead; the rest is
+        # backing.  Without any vocal tag the mix stays a plain equal-loudness
+        # sum, so existing pipelines are unaffected.
+        has_vocal = any(role == "vocal" for role in roles)
         length = max(samples.shape[0] for samples in prepared)
-        mixed = np.zeros((length, channels), dtype=np.float32)
-        # Match every track to the same loudness before summing so that a
-        # quiet stem is not buried by a loud one.
-        for samples in prepared:
-            mixed[: samples.shape[0]] += samples * self._loudness_gain(samples)
+        vocal = np.zeros((length, channels), dtype=np.float32)
+        backing = np.zeros((length, channels), dtype=np.float32)
+        for samples, role in zip(prepared, roles, strict=True):
+            track = samples * self._loudness_gain(samples)
+            if has_vocal and role == "vocal":
+                track = track * self.MIX_VOCAL_GAIN
+                target = vocal
+            else:
+                if has_vocal:
+                    track = track * self.MIX_BACKING_GAIN
+                target = backing
+            target[: samples.shape[0]] += track
+
+        if has_vocal and np.any(backing):
+            duck = self._duck_gain(vocal, rate)
+            backing = backing * duck[:, None]
+        mixed = vocal + backing
         peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
         if peak > self.PEAK_CEILING:
             mixed *= self.PEAK_CEILING / peak
         return _encode_wav(mixed, rate)
+
+    def _duck_gain(self, vocal: np.ndarray, rate: int) -> np.ndarray:
+        """Time-varying backing gain: dips while the vocal is sounding."""
+        mono = vocal.mean(axis=1)
+        window = max(1, int(self.MIX_DUCK_WINDOW * rate))
+        envelope = np.sqrt(np.maximum(_smooth(np.square(mono), window), 0.0))
+        reference = self.TARGET_RMS * self.MIX_VOCAL_GAIN
+        level = np.clip(envelope / (reference + 1e-9), 0.0, 1.0)
+        duck = 1.0 - self.MIX_DUCK_DEPTH * level
+        return _smooth(duck, window)
 
     def _loudness_gain(self, samples: np.ndarray) -> float:
         """Gain bringing ``samples`` to ``TARGET_RMS`` without clipping."""
@@ -324,6 +361,17 @@ def _high_pass(signal: np.ndarray, rate: int, cutoff_hz: float) -> np.ndarray:
     if signal.size == 0 or cutoff_hz <= 0.0:
         return signal
     return np.asarray(signal - _low_pass(signal, rate, cutoff_hz), dtype=np.float32)
+
+
+def _smooth(signal: np.ndarray, window: int) -> np.ndarray:
+    """Centred moving average via prefix sums (O(n) regardless of window)."""
+    if window <= 1 or signal.size == 0:
+        return np.asarray(signal, dtype=np.float32)
+    pad = window // 2
+    padded = np.pad(signal, (pad, window - 1 - pad), mode="edge")
+    cumulative = np.concatenate(([0.0], np.cumsum(padded, dtype=np.float64)))
+    smoothed = (cumulative[window:] - cumulative[:-window]) / window
+    return smoothed.astype(np.float32)
 
 
 def _fft_convolve(signal: np.ndarray, impulse: np.ndarray) -> np.ndarray:

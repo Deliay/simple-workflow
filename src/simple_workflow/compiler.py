@@ -45,6 +45,7 @@ class Node:
     errors: list[str] = field(default_factory=list)
     no_cache: bool = False
     file_name: str | None = None
+    mix_role: str | None = None
 
     @property
     def width(self) -> int:
@@ -92,6 +93,7 @@ class _Builder:
         self.nodes: dict[str, Node] = {}
         self.symbols: dict[str, str] = {}
         self.file_tags: dict[str, str] = {}
+        self.mix_tags: dict[str, str] = {}
         self.creation_order: list[str] = []
         self._counter = 0
 
@@ -109,18 +111,18 @@ class _Builder:
         for statement in statements:
             self._build_statement(statement)
         self._resolve_refs()
-        self._apply_file_tags()
+        self._apply_tags()
 
     def _build_statement(self, elements: list[Element]) -> None:
         ids: list[str] = []
         for index, element in enumerate(elements):
-            if element.kind == "file":
+            if element.kind in ("file", "mix"):
                 if index != len(elements) - 1:
                     raise WorkflowError(
-                        f"{element.raw!r}: a [file:...] tag must be the last "
-                        "element of a chain"
+                        f"{element.raw!r}: a [{element.kind}:...] tag must be "
+                        "the last element of a chain"
                     )
-                self._record_file_tag(elements[:index], element)
+                self._record_tag(elements[:index], element)
                 break
             if index > 0 and element.kind in ("ref", "input"):
                 raise WorkflowError(
@@ -132,33 +134,41 @@ class _Builder:
         for producer, consumer in zip(ids, ids[1:], strict=False):
             self.nodes[consumer].incoming.append(producer)
 
-    def _record_file_tag(self, predecessors: list[Element], element: Element) -> None:
-        """Associate ``[file:name]`` with the variable it tags."""
+    def _record_tag(self, predecessors: list[Element], element: Element) -> None:
+        """Associate a terminal ``[file:name]`` / ``[mix:role]`` tag with its var."""
         if not predecessors:
             raise WorkflowError(
-                f"{element.raw!r}: a [file:...] tag needs a value on its left"
+                f"{element.raw!r}: a [{element.kind}:...] tag needs a value on its left"
             )
         previous = predecessors[-1]
         symbol: str | None = None
-        if previous.kind == "tool" and previous.name:
+        if previous.name and previous.kind in ("tool", "input"):
             symbol = previous.name
         elif previous.kind == "ref" and len(previous.refs) == 1:
             symbol = previous.refs[0]
         if symbol is None:
             raise WorkflowError(
-                f"{element.raw!r}: a [file:...] tag must follow a named node or "
-                "a single [var:...] reference"
+                f"{element.raw!r}: a [{element.kind}:...] tag must follow a named "
+                "node or a single [var:...] reference"
             )
-        self.file_tags[symbol] = element.file_name or ""
+        if element.kind == "file":
+            self.file_tags[symbol] = element.file_name or ""
+        else:
+            self.mix_tags[symbol] = element.mix_role or ""
 
-    def _apply_file_tags(self) -> None:
+    def _apply_tags(self) -> None:
         for symbol, filename in self.file_tags.items():
-            producer = self.symbols.get(symbol)
-            if producer is None:
-                raise WorkflowError(
-                    f"[file:{filename}]: undefined variable {symbol!r}"
-                )
+            producer = self._tag_target(symbol, f"file:{filename}")
             self.nodes[producer].file_name = filename
+        for symbol, role in self.mix_tags.items():
+            producer = self._tag_target(symbol, f"mix:{role}")
+            self.nodes[producer].mix_role = role
+
+    def _tag_target(self, symbol: str, label: str) -> str:
+        producer = self.symbols.get(symbol)
+        if producer is None:
+            raise WorkflowError(f"[{label}]: undefined variable {symbol!r}")
+        return producer
 
     def _make_node(self, element: Element) -> Node:
         seq = self._counter

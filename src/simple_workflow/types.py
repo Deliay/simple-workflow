@@ -33,18 +33,25 @@ MaybeType: TypeAlias = ValueType | None
 
 
 class Tagged(bytes):
-    """A binary value carrying the filename declared by a ``[file:name]`` tag.
+    """A binary value carrying the metadata attached by terminal tags.
 
-    It *is* a ``bytes`` instance (so every existing binary tool keeps working),
-    but also exposes ``filename`` so the ``zip`` tool can name the members of the
-    archive it builds.
+    It *is* a ``bytes`` instance (so every existing binary tool keeps working).
+    ``filename`` is set by ``[file:name]`` (consumed by ``zip``) and ``role`` by
+    ``[mix:vocal]`` (consumed by ``mix``); a value may carry either or both.
     """
 
-    filename: str
+    filename: str | None
+    role: str | None
 
-    def __new__(cls, value: bytes, filename: str) -> Tagged:
+    def __new__(
+        cls,
+        value: bytes,
+        filename: str | None = None,
+        role: str | None = None,
+    ) -> Tagged:
         instance = super().__new__(cls, value)
         instance.filename = filename
+        instance.role = role
         return instance
 
 

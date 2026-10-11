@@ -160,11 +160,11 @@ class Executor:
 
     @staticmethod
     def _tag(node: Node, values: list[Any]) -> list[Any]:
-        """Attach the ``[file:name]`` filename to a tagged node's output."""
-        if node.file_name and len(values) == 1:
+        """Attach any ``[file:name]`` / ``[mix:role]`` metadata to the output."""
+        if (node.file_name or node.mix_role) and len(values) == 1:
             value = values[0]
             if isinstance(value, (bytes, bytearray, memoryview)):
-                return [Tagged(bytes(value), node.file_name)]
+                return [Tagged(bytes(value), node.file_name, node.mix_role)]
         return values
 
     @staticmethod

@@ -109,3 +109,15 @@ def test_file_tag_needs_a_source(registry) -> None:  # noqa: ANN001
 def test_file_tag_needs_a_named_source(registry) -> None:  # noqa: ANN001
     with pytest.raises(WorkflowError, match="named node"):
         compile_script("[bv:x] -> [file:x.mp4]", registry)
+
+
+def test_mix_role_is_attached_to_producer(registry) -> None:  # noqa: ANN001
+    script = "a[bv:test] -> [mix:vocal]\n[var:a] -> [final]"
+    plan = compile_script(script, registry)
+    roles = {node.name: node.mix_role for node in plan.nodes.values() if node.mix_role}
+    assert roles == {"a": "vocal"}
+
+
+def test_mix_tag_must_be_last(registry) -> None:  # noqa: ANN001
+    with pytest.raises(WorkflowError, match="last element"):
+        compile_script("a[bv:x] -> [mix:vocal] -> [final]", registry)

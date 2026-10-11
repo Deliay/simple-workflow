@@ -59,6 +59,7 @@ uv run simple-workflow serve
 | `[input]` / `[input:name]`      | 读取工作流输入（text/number/binary）              |
 | `[final]` / `[output]`          | 终止汇点；其值即工作流结果                        |
 | `[file:name.mp4]`               | 给流入的值打上文件名标签（终结点）                |
+| `[mix:vocal]`                   | 给流入的值打上混音角色标签（终结点，见下文）      |
 | `[!tool:arg]`                   | 开头的 `!` 表示该节点忽略缓存（见下文）           |
 
 `[var:a, b]` 与 `[var:a, var:b]` 等价 —— 每一项的 `var:` 前缀是可选的。
@@ -91,13 +92,15 @@ uv run simple-workflow serve
 -> [unzip:noreverb]
 -> viridis-vocal[rvc:viridis-v2_200e_5000s.pth]
 -> reverb-viridis-vocal[audio:reverb]
+[var:viridis-vocal] -> [mix:vocal]
 [var:band-roformer] -> bands[unzip:other.wav]
 [var:karaoke-roformer] -> harmony[unzip:Instrumental.wav]
 [var:viridis-vocal, var:bands, var:harmony] -> result[audio:mix]
 [var:result] -> [final]
 ```
 
-这里 `reverb-viridis-vocal` 从未被使用，会被静默剪掉。
+这里 `reverb-viridis-vocal` 从未被使用，会被静默剪掉；`[mix:vocal]` 把转换后的人声标记为
+`audio:mix` 的主唱声部。
 
 再给出两个更紧凑的示例，分别使用 MSST 服务的 Vocal2Midi 与 DiffSinger 端点：
 
@@ -169,9 +172,21 @@ MIDI、USTX 与纯文本），并原样返回。第一个参数是**必填的 2 
 
 - `mono` —— 降混为单声道，
 - `reverb` —— 施加适合流行音乐的短促、带阻尼、以干声为主的 FFT 卷积混响（含预延迟、高频阻尼与低频高通），
-- `mix` —— 先把各轨响度（RMS）对齐再相加，并保持在峰值上限内，
+- `mix` —— 先对齐各轨响度再相加；被 `[mix:vocal]` 标记的轨作为人声被抬高，伴奏在其下方做侧链闪避（见下文），
 - `amp` —— 自动增益：按 RMS 归一化到目标响度，并用峰值上限兜底（静音保持不变），
 - `mp3` —— 通过 ffmpeg 编码为 MP3（ABR/VBR V0）。
+
+#### 用 `[mix:vocal]` 突出人声
+
+`[mix:vocal]` 是一个**终结点**标签（和 `[file:name]` 一样）：它把流入的变量标记为人声。
+只要 `mix` 至少看到一路人声，它就会抬高人声（`MIX_VOCAL_GAIN`）、压低未标记的伴奏
+（`MIX_BACKING_GAIN`），并用人声包络对伴奏做**侧链闪避**（`MIX_DUCK_DEPTH`）。没有任何
+人声标记时，`mix` 仍是普通的等响相加，现有流水线不受影响。
+
+```text
+[var:vocal] -> [mix:vocal]                       # 标记主唱
+[var:vocal, var:bands, var:harmony] -> [audio:mix] -> [final]
+```
 
 #### 用 `[file:name]` 与 `[zip]` 命名打包文件
 
