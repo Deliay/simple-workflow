@@ -6,8 +6,10 @@ Two request styles are supported:
 body.  By default the fields are named ``a0``, ``a1``, ... but a tool may map
 them to concrete names via ``field_names`` (e.g. the MSST API expects ``model``
 and ``audio``).  Text/number parameters become plain fields, binary parameters
-become file parts.  ``default_fields`` are always added (e.g.
-``response_format=zip``).
+become file parts.  A binary part's filename defaults to ``<field>.wav`` when
+the payload is a RIFF WAV and ``<field>.bin`` otherwise, but a tool may pin it
+via ``file_names`` (e.g. the DiffSinger API wants an ``.ustx`` score).
+``default_fields`` are always added (e.g. ``response_format=zip``).
 
 **GET with a URL template** — the resolved endpoint may contain ``{name}``
 placeholders where ``name`` is a signature parameter.  The placeholder is
@@ -29,6 +31,14 @@ Examples::
     TOOLS_BV_ENDPOINT=http://xxx.xxx/api/b/video/{bvid}/download?kind=audio
     # -> GET http://xxx.xxx/api/b/video/BV1.../download?kind=audio
 
+    # Vocal2Midi (v2m)
+    TOOLS_V2M_ENDPOINT=http://xxx.xxx/api/v2m/inference
+    # -> POST, fields: audio, output_formats=mid,ustx,txt
+
+    # DiffSinger / SVS
+    TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference
+    # -> POST, fields: model, ustx, output_format=wav
+
 The endpoint is a *full URL* resolved per tool, in this order:
 
 1. ``RunContext.endpoints[tool_name]`` (per-request override),
@@ -46,7 +56,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import quote
 
@@ -70,6 +80,7 @@ class ApiTool(Tool):
         endpoint: str | None = None,
         method: str = "POST",
         field_names: Sequence[str] | None = None,
+        file_names: Mapping[str, str] | None = None,
         default_fields: dict[str, str] | None = None,
         transcode_audio: bool = False,
         transcode_channels: int | None = None,
@@ -80,6 +91,7 @@ class ApiTool(Tool):
         self.endpoint = endpoint
         self.method = method.upper()
         self.field_names = tuple(field_names) if field_names else None
+        self.file_names = dict(file_names or {})
         self.default_fields = dict(default_fields or {})
         self.transcode_audio = transcode_audio
         self.transcode_channels = transcode_channels
@@ -121,6 +133,11 @@ class ApiTool(Tool):
             return self.field_names[index]
         return f"a{index}"
 
+    def _filename_for(self, key: str, payload: bytes) -> str:
+        if key in self.file_names:
+            return self.file_names[key]
+        return f"{key}.wav" if payload[:4] == b"RIFF" else f"{key}.bin"
+
     async def run(self, params: list[Any], ctx: RunContext) -> Any:  # noqa: ANN401
         by_name = {
             self._param_name(index): value for index, value in enumerate(params)
@@ -159,8 +176,11 @@ class ApiTool(Tool):
                                 payload = ensure_wav(
                                     payload, channels=self.transcode_channels
                                 )
-                            filename = f"{key}.wav" if payload[:4] == b"RIFF" else f"{key}.bin"
-                            files[key] = (filename, payload, "application/octet-stream")
+                            files[key] = (
+                                self._filename_for(key, payload),
+                                payload,
+                                "application/octet-stream",
+                            )
                         else:
                             data[key] = _format_scalar(value)
                     response = await client.post(
@@ -220,7 +240,7 @@ def _parse_response(name: str, output: ValueType, response: httpx.Response) -> A
 
 
 def make_api_tools() -> list[ApiTool]:
-    """The three API tools described by the pipeline spec.
+    """The API tools described by the pipeline spec.
 
     Endpoints are not baked in; each is resolved from ``TOOLS_<NAME>_ENDPOINT``
     at run time (or from the request's ``tool_endpoints``).
@@ -250,5 +270,24 @@ def make_api_tools() -> list[ApiTool]:
             field_names=("model", "audio"),
             default_fields={"output_format": "wav"},
             transcode_audio=True,
+        ),
+        # POST /api/v2m/inference with audio (+ output_formats=mid,ustx,txt);
+        # returns a zip of the requested artifacts, forwarded untouched.
+        ApiTool(
+            "v2m",
+            Signature(params=(Param("audio", binary),), output=binary),
+            field_names=("audio",),
+            file_names={"audio": "vocal.wav"},
+            default_fields={"output_formats": "mid,ustx,txt"},
+            transcode_audio=True,
+            transcode_channels=1,
+        ),
+        # POST /api/diffsinger/inference with model + ustx (+ output_format=wav)
+        ApiTool(
+            "svs",
+            Signature(params=(Param("model", text), Param("ustx", binary)), output=binary),
+            field_names=("model", "ustx"),
+            file_names={"ustx": "score.ustx"},
+            default_fields={"output_format": "wav"},
         ),
     ]

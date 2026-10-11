@@ -86,6 +86,70 @@ def test_rvc_uses_named_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     assert b"wav" in body
 
 
+def test_v2m_sends_audio_and_default_output_formats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = request.content
+        return httpx.Response(200, content=b"PK-v2m-zip")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("simple_workflow.tools.api.httpx.AsyncClient", factory)
+
+    tool = next(tool for tool in make_api_tools() if tool.name == "v2m")
+    ctx = RunContext(endpoints={"v2m": "http://host/api/v2m/inference"})
+    result = asyncio.run(tool.run([MONO_WAV], ctx))
+
+    assert result == b"PK-v2m-zip"
+    assert captured["url"] == "http://host/api/v2m/inference"
+    body = captured["body"]
+    assert isinstance(body, bytes)
+    assert b'name="output_formats"' in body
+    assert b"mid,ustx,txt" in body
+    assert b'name="audio"' in body
+    assert b'filename="vocal.wav"' in body
+
+
+def test_svs_sends_model_and_ustx_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = request.content
+        return httpx.Response(200, content=b"WAV")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("simple_workflow.tools.api.httpx.AsyncClient", factory)
+
+    tool = next(tool for tool in make_api_tools() if tool.name == "svs")
+    ctx = RunContext(endpoints={"svs": "http://host/api/diffsinger/inference"})
+    result = asyncio.run(tool.run(["小松绿v1.1", b"<ustx/>"], ctx))
+
+    assert result == b"WAV"
+    assert captured["url"] == "http://host/api/diffsinger/inference"
+    body = captured["body"]
+    assert isinstance(body, bytes)
+    assert b'name="model"' in body
+    assert "小松绿v1.1".encode() in body
+    assert b'name="ustx"' in body
+    assert b'filename="score.ustx"' in body
+    assert b'name="output_format"' in body
+    assert b"wav" in body
+
+
 def test_api_key_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, str | None] = {}
 

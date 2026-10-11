@@ -25,7 +25,7 @@ def test_health_and_tools() -> None:
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
         tools = {tool["name"] for tool in client.get("/v1/tools").json()["tools"]}
-        assert {"bv", "msst", "rvc", "unzip", "audio"} <= tools
+        assert {"bv", "msst", "rvc", "v2m", "svs", "unzip", "audio"} <= tools
 
 
 def test_compile_long_script() -> None:

@@ -27,7 +27,7 @@ result, and then executes the surviving nodes concurrently.
   identity *and* the keys of the nodes feeding it, so a re-run reuses the
   longest unchanged prefix of the pipeline.
 - **Two tool classes**:
-  - *API tools* (`bv`, `msst`, `rvc`) — `POST` form to an external HTTP service.
+  - *API tools* (`bv`, `msst`, `rvc`, `v2m`, `svs`) — `POST` form to an external HTTP service.
   - *Local tools* (`unzip`, `audio`) — implemented in-process.
 - HTTP API (FastAPI) and a small CLI, packaged with [uv](https://docs.astral.sh/uv/)
   and shipped as a Docker image.
@@ -110,6 +110,18 @@ is referenced later):
 
 Here `reverb-viridis-vocal` is never used, so it is pruned silently.
 
+Two more compact examples using the MSST service's Vocal2Midi and DiffSinger
+endpoints:
+
+```text
+# vocal audio -> zip of mid/ustx/txt artifacts
+[input:vocal] -> [v2m] -> [final]
+
+# render an OpenUtau .ustx score with a voicebank -> wav
+[input:score] -> rendered[svs:小松绿v1.1]
+[var:rendered] -> [final]
+```
+
 ## Tools
 
 ### API tools
@@ -126,6 +138,8 @@ binary → raw bytes).
 | `bv`   | `(bvid: text) -> binary`                 | binary | `GET .../video/{bvid}/download?kind=audio` |
 | `msst` | `(model: text, audio: binary) -> binary` | binary | `POST` fields `model`, `audio` (+ `response_format=zip`) |
 | `rvc`  | `(model: text, audio: binary) -> binary` | binary | `POST` fields `model`, `audio` (+ `output_format=wav`) |
+| `v2m`  | `(audio: binary) -> binary`              | binary | `POST` field `audio` (+ `output_formats=mid,ustx,txt`) |
+| `svs`  | `(model: text, ustx: binary) -> binary`  | binary | `POST` fields `model`, `ustx` (+ `output_format=wav`) |
 
 The endpoint may contain `{name}` placeholders (one per signature parameter);
 they are substituted with the percent-encoded argument, which is then not sent
@@ -152,6 +166,16 @@ header.
 `TOOLS_RVC_ENDPOINT=http://host:7870/infer`, and `TOOLS_RVC_API_KEY` if you
 enabled auth).
 
+`v2m` targets the [MSST API](https://github.com/Deliay/msst-api)'s Vocal2Midi
+endpoint (`POST /api/v2m/inference`); it turns vocal audio into a zip of
+lyric-aligned artifacts (MIDI, USTX and plain text by default), returned
+verbatim. Set `TOOLS_V2M_ENDPOINT=http://host/api/v2m/inference`.
+
+`svs` targets the same service's DiffSinger (singing voice synthesis) endpoint
+(`POST /api/diffsinger/inference`); it renders an OpenUtau `.ustx` score with a
+named voicebank such as `小松绿v1.1` and returns a WAV. Set
+`TOOLS_SVS_ENDPOINT=http://host/api/diffsinger/inference`.
+
 ### Local tools
 
 | Tool    | Signature                                    | Output |
@@ -173,6 +197,8 @@ Start the server:
 TOOLS_BV_ENDPOINT='http://xxx.xxx/api/b/video/{bvid}/download?kind=audio' \
 TOOLS_MSST_ENDPOINT=http://xxx.xxx/api/msst/inference \
 TOOLS_RVC_ENDPOINT=http://xxx.xxx:7870/infer \
+TOOLS_V2M_ENDPOINT=http://xxx.xxx/api/v2m/inference \
+TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference \
   uv run simple-workflow serve
 ```
 

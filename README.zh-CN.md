@@ -23,7 +23,7 @@
 - **分层 S3 结果缓存**：每个工具节点的输出，既以自己的身份为键，又叠加其上游节点的键，
   因此重跑时能复用管线中最长的一截未变化前缀。
 - **两类工具**：
-  - *API 工具*（`bv`、`msst`、`rvc`）——以 `POST` 表单调用外部 HTTP 服务。
+  - *API 工具*（`bv`、`msst`、`rvc`、`v2m`、`svs`）——以 `POST` 表单调用外部 HTTP 服务。
   - *本地工具*（`unzip`、`audio`）——在进程内实现。
 - 提供 HTTP API（FastAPI）与小型 CLI，使用 [uv](https://docs.astral.sh/uv/) 管理，
   并提供 Docker 镜像。
@@ -97,6 +97,17 @@ uv run simple-workflow serve
 
 这里 `reverb-viridis-vocal` 从未被使用，会被静默剪掉。
 
+再给出两个更紧凑的示例，分别使用 MSST 服务的 Vocal2Midi 与 DiffSinger 端点：
+
+```text
+# 人声音频 -> 包含 mid/ustx/txt 产物的 zip
+[input:vocal] -> [v2m] -> [final]
+
+# 用音源渲染 OpenUtau .ustx 乐谱 -> wav
+[input:score] -> rendered[svs:小松绿v1.1]
+[var:rendered] -> [final]
+```
+
 ## 工具
 
 ### API 工具
@@ -111,6 +122,8 @@ binary → 原始字节）。
 | `bv`   | `(bvid: text) -> binary`                 | binary | `GET .../video/{bvid}/download?kind=audio`  |
 | `msst` | `(model: text, audio: binary) -> binary` | binary | `POST` 字段 `model`、`audio`（+ `response_format=zip`） |
 | `rvc`  | `(model: text, audio: binary) -> binary` | binary | `POST` 字段 `model`、`audio`（+ `output_format=wav`） |
+| `v2m`  | `(audio: binary) -> binary`              | binary | `POST` 字段 `audio`（+ `output_formats=mid,ustx,txt`） |
+| `svs`  | `(model: text, ustx: binary) -> binary`  | binary | `POST` 字段 `model`、`ustx`（+ `output_format=wav`） |
 
 端点里可以包含 `{name}` 占位符（每个对应一个签名参数）；它们会被 URL 编码后的实参替换，
 且该实参不会再次发送。每个端点是**完整 URL**，按如下顺序解析：
@@ -131,6 +144,14 @@ binary → 原始字节）。
 `rvc` 对接 [Applio API 插件](https://github.com/Deliay/applio-api-plugin)（`POST /infer`）；
 它直接返回转换后的音频（设置 `TOOLS_RVC_ENDPOINT=http://host:7870/infer`，若启用了鉴权再设
 `TOOLS_RVC_API_KEY`）。
+
+`v2m` 对接 [MSST API](https://github.com/Deliay/msst-api) 的 Vocal2Midi 端点
+（`POST /api/v2m/inference`）；它把人声音频转换为一个 zip，内含按歌词对齐的产物（默认
+MIDI、USTX 与纯文本），并原样返回。设置 `TOOLS_V2M_ENDPOINT=http://host/api/v2m/inference`。
+
+`svs` 对接同一服务的 DiffSinger（歌声合成）端点（`POST /api/diffsinger/inference`）；
+它用指定的音源（如 `小松绿v1.1`）渲染 OpenUtau `.ustx` 乐谱并返回 WAV。设置
+`TOOLS_SVS_ENDPOINT=http://host/api/diffsinger/inference`。
 
 ### 本地工具
 
@@ -153,6 +174,8 @@ binary → 原始字节）。
 TOOLS_BV_ENDPOINT='http://xxx.xxx/api/b/video/{bvid}/download?kind=audio' \
 TOOLS_MSST_ENDPOINT=http://xxx.xxx/api/msst/inference \
 TOOLS_RVC_ENDPOINT=http://xxx.xxx:7870/infer \
+TOOLS_V2M_ENDPOINT=http://xxx.xxx/api/v2m/inference \
+TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference \
   uv run simple-workflow serve
 ```
 
