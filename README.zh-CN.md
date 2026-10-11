@@ -3,8 +3,8 @@
 [English](README.md) | **简体中文**
 
 一个强类型、极简的工作流引擎，由一套紧凑的 pipeline DSL 驱动。你用文本脚本描述一张工具调用
-构成的 DAG；引擎解析它、**在执行前对整张图做类型检查**、剪掉所有到不了结果的节点，然后并发
-执行剩下的节点。
+构成的 DAG；引擎解析它、**在执行前对整张图做类型检查**、剪掉所有到不了结果的节点，然后
+执行剩下的节点（默认串行）。
 
 ```text
 [bv:BV1TqaR67E7f] -> band-roformer[msst:Kim_MelBandRoformer.ckpt]
@@ -19,12 +19,12 @@
 - **只有三种值类型**：`text`、`number`、`binary`。
 - **静态类型检查**：逐条边检查类型，并检查工具参数的个数（arity）。
 - **死代码消除**：到不了 `[final]`/`[output]` 的节点在执行前直接丢弃。
-- **数据流 DAG 执行**：相互独立的分支并发运行；共享节点只执行一次。
+- **数据流 DAG 执行**：可设置并发上限（默认 1，即串行）；共享节点只执行一次。
 - **分层 S3 结果缓存**：每个工具节点的输出，既以自己的身份为键，又叠加其上游节点的键，
   因此重跑时能复用管线中最长的一截未变化前缀。
 - **两类工具**：
   - *API 工具*（`bv`、`msst`、`rvc`、`v2m`、`svs`）——以 `POST` 表单调用外部 HTTP 服务。
-  - *本地工具*（`unzip`、`audio`）——在进程内实现。
+  - *本地工具*（`unzip`、`zip`、`audio`）——在进程内实现。
 - 提供 HTTP API（FastAPI）与小型 CLI，使用 [uv](https://docs.astral.sh/uv/) 管理，
   并提供 Docker 镜像。
 
@@ -267,6 +267,15 @@ TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference \
 }
 ```
 
+## 并发
+
+节点通过一个有界 DAG 调度器执行。默认并发度为 **1**，即管线严格串行、重型工具不会互相
+抢占资源。可用 `SW_CONCURRENCY` 提高并发，让相互独立的分支并行：
+
+```bash
+SW_CONCURRENCY=4 uv run simple-workflow serve
+```
+
 ## 缓存
 
 每个工具节点都会缓存自己的输出，而且是**分层**的：节点键 = 自身身份（工具名 + 字面量参数）
@@ -361,7 +370,7 @@ simple-workflow serve --port 8000
 src/simple_workflow/
   parser.py     # DSL -> 语句/元素
   compiler.py   # 建图、剪枝、拓扑排序、类型检查 -> Plan
-  engine.py     # 并发 DAG 执行器
+  engine.py     # 有界 DAG 执行器（默认串行）
   cache.py      # 分层、基于 S3 的节点结果缓存
   registry.py   # 工具注册表
   signature.py  # 参数/返回值类型契约

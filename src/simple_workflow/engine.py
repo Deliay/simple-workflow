@@ -1,13 +1,14 @@
 """Workflow execution engine.
 
-Runs a compiled :class:`~simple_workflow.compiler.Plan` on a DAG scheduler:
-nodes whose dependencies are satisfied execute concurrently, so independent
-branches of the pipeline overlap.
+Runs a compiled :class:`~simple_workflow.compiler.Plan` on a DAG scheduler that
+executes up to ``Executor.concurrency`` nodes at once.  The default of 1 runs the
+pipeline strictly sequentially; raise it to let independent branches overlap.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -43,16 +44,31 @@ class NodeResult:
     cached: bool = False
 
 
+def concurrency_from_env(default: int = 1) -> int:
+    """Max concurrent nodes, from ``SW_CONCURRENCY`` (default 1, minimum 1)."""
+    raw = os.environ.get("SW_CONCURRENCY")
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
 class Executor:
     def __init__(
         self,
         plan: Plan,
         registry: ToolRegistry,
         cache: CacheStore | None = None,
+        concurrency: int = 1,
     ) -> None:
         self.plan = plan
         self.registry = registry
         self.cache: CacheStore = cache if cache is not None else NullStore()
+        #: Maximum number of nodes executing at once.  The default of 1 runs the
+        #: pipeline strictly sequentially so heavy tools never overlap.
+        self.concurrency = max(1, concurrency)
         self._bypass_token = ""
 
     async def run(
@@ -75,6 +91,7 @@ class Executor:
                 indegree[node_id] += 1
                 dependents[producer].append(node_id)
 
+        ready = [node_id for node_id in self.plan.order if indegree[node_id] == 0]
         running: dict[asyncio.Task[NodeResult], str] = {}
 
         def schedule(node_id: str) -> None:
@@ -83,12 +100,12 @@ class Executor:
             )
             running[task] = node_id
 
-        for node_id in self.plan.order:
-            if indegree[node_id] == 0:
-                schedule(node_id)
-
         try:
-            while running:
+            while ready or running:
+                while ready and len(running) < self.concurrency:
+                    schedule(ready.pop(0))
+                if not running:
+                    break
                 done, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     node_id = running.pop(task)
@@ -98,7 +115,8 @@ class Executor:
                     for consumer in dependents[node_id]:
                         indegree[consumer] -= 1
                         if indegree[consumer] == 0:
-                            schedule(consumer)
+                            ready.append(consumer)
+                ready.sort(key=lambda nid: self.plan.nodes[nid].seq)
         except BaseException:
             for task in running:
                 task.cancel()

@@ -127,6 +127,44 @@ def test_bundle_cannot_consume_upstream(registry) -> None:  # noqa: ANN001
         compile_script("[bv:x] -> [[bv:y], [bv:z]] -> [final]", registry)
 
 
+def test_engine_respects_concurrency_limit() -> None:
+    from simple_workflow import Param, Signature, Tool, ToolRegistry
+
+    def peak_for(concurrency: int) -> int:
+        state = {"active": 0, "peak": 0}
+
+        class Probe(Tool):
+            def __init__(self) -> None:
+                super().__init__(
+                    "probe",
+                    Signature(
+                        params=(Param("id", ValueType.TEXT),),
+                        variadic=Param("inputs", ValueType.BINARY),
+                        output=ValueType.BINARY,
+                    ),
+                )
+
+            async def run(self, params, ctx):  # noqa: ANN001, ANN201
+                state["active"] += 1
+                state["peak"] = max(state["peak"], state["active"])
+                await asyncio.sleep(0.01)
+                state["active"] -= 1
+                return b"ok"
+
+        reg = ToolRegistry()
+        reg.register(Probe())
+        script = (
+            "a[probe:1]\nb[probe:2]\n"
+            "[var:a, var:b] -> out[probe:3]\n[var:out] -> [final]"
+        )
+        plan = compile_script(script, reg)
+        asyncio.run(Executor(plan, reg, concurrency=concurrency).run({}))
+        return state["peak"]
+
+    assert peak_for(1) == 1
+    assert peak_for(2) == 2
+
+
 def test_mix_vocal_tag_reaches_the_tool() -> None:
     from simple_workflow import Param, Signature, Tool, ToolRegistry
 

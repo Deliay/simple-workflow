@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from .compiler import compile_script
-from .engine import Executor, InputValue
+from .engine import Executor, InputValue, concurrency_from_env
 from .errors import WorkflowError
 from .registry import build_registry
 from .tools.base import RunContext
@@ -67,7 +67,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         api_keys=_parse_kv(args.api_key),
         timeout=float(os.environ.get("SW_TOOL_TIMEOUT", "300")),
     )
-    outputs, _ = asyncio.run(Executor(plan, registry).run(inputs, ctx))
+    outputs, _ = asyncio.run(
+        Executor(plan, registry, concurrency=concurrency_from_env()).run(inputs, ctx)
+    )
 
     if args.output_dir:
         directory = Path(args.output_dir)

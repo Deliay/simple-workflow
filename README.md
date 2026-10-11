@@ -5,7 +5,7 @@
 A strongly-typed, minimal workflow engine driven by a compact pipeline DSL.
 You describe a DAG of tool calls in a text script; the engine parses it,
 **type-checks the graph before running**, prunes anything that does not reach a
-result, and then executes the surviving nodes concurrently.
+result, and then executes the surviving nodes (sequentially by default).
 
 ```text
 [bv:BV1TqaR67E7f] -> band-roformer[msst:Kim_MelBandRoformer.ckpt]
@@ -21,8 +21,8 @@ result, and then executes the surviving nodes concurrently.
 - **Static type checking** of every edge, plus arity checks on tool parameters.
 - **Dead-code elimination**: nodes that cannot reach `[final]`/`[output]` are
   dropped before execution.
-- **Dataflow DAG execution** with independent branches running concurrently;
-  shared nodes run exactly once.
+- **Dataflow DAG execution** with an optional concurrency limit (default 1, i.e.
+  sequential); shared nodes run exactly once.
 - **Layered S3 result cache**: every tool node's output is keyed by its own
   identity *and* the keys of the nodes feeding it, so a re-run reuses the
   longest unchanged prefix of the pipeline.
@@ -296,6 +296,16 @@ Response:
 }
 ```
 
+## Concurrency
+
+Nodes execute through a bounded DAG scheduler. The default concurrency is **1**,
+so the pipeline runs strictly sequentially and heavy tools never overlap. Raise
+it with `SW_CONCURRENCY` to let independent branches run together:
+
+```bash
+SW_CONCURRENCY=4 uv run simple-workflow serve
+```
+
 ## Caching
 
 Every tool node caches its output, and the cache is **layered**: a node's key is
@@ -398,7 +408,7 @@ simple-workflow serve --port 8000
 src/simple_workflow/
   parser.py     # DSL -> statements of elements
   compiler.py   # build graph, prune dead nodes, toposort, type-check -> Plan
-  engine.py     # concurrent DAG executor
+  engine.py     # bounded DAG executor (sequential by default)
   cache.py      # layered, S3-backed node result cache
   registry.py   # tool registry
   signature.py  # param/output type contracts

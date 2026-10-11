@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .cache import CacheStore, build_cache, cleanup_interval
 from .compiler import Plan, compile_script
-from .engine import Executor, InputValue
+from .engine import Executor, InputValue, concurrency_from_env
 from .errors import CompileError, ScriptSyntaxError, WorkflowError
 from .registry import ToolRegistry, build_registry
 from .tools.api import ApiTool
@@ -192,7 +192,9 @@ async def run_endpoint(request: Request, body: RunRequest) -> RunResponse:
         timeout=body.timeout or default_timeout,
     )
 
-    executor = Executor(plan, registry, cache=_cache(request))
+    executor = Executor(
+        plan, registry, cache=_cache(request), concurrency=concurrency_from_env()
+    )
     started = time.perf_counter()
     try:
         outputs, timings = await executor.run(_to_inputs(body.inputs), ctx)
