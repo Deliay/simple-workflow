@@ -331,14 +331,14 @@ SW_TOOL_TIMEOUT=600 uv run simple-workflow serve
 #                                  \__________ 每次都重新执行 __________/
 ```
 
-缓存对象存放在 S3，带有 TTL（默认 **60 分钟**）；后台任务会定期清理过期对象。启用方式：
+缓存对象存放在 S3，带有 TTL（默认 **7 天**）；后台任务会定期清理过期对象。启用方式：
 
 ```bash
 # 可选：指向 MinIO 或其他兼容 S3 的端点
 export SW_CACHE_ENDPOINT=http://minio:9000
 export SW_CACHE_BUCKET=my-bucket
 export SW_CACHE_PREFIX=simple-workflow/cache/   # 可选
-export SW_CACHE_TTL=3600                         # 可选，秒
+export SW_CACHE_TTL=604800                       # 可选，秒（7 天）
 uv run simple-workflow serve
 ```
 

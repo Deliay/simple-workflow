@@ -22,8 +22,8 @@ the keys nest like this::
     key(unzip)  = H("tool", "unzip", "Vocals.wav", key(msst))
     key(audio)  = H("tool", "audio", "mono", key(unzip))
 
-Entries are stored in S3 and expire after a configurable TTL (default 60
-minutes).  A background task periodically evicts the expired objects, and
+Entries are stored in S3 and expire after a configurable TTL (default 7 days).
+A background task periodically evicts the expired objects, and
 :meth:`CacheStore.clear` removes everything on demand.
 
 The cache is disabled unless ``SW_CACHE_BUCKET`` is set (or the in-memory
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 _KEY_SCHEME = "simple-workflow-cache-v1"
 _KEY_SEPARATOR = b"\x1f"
 
-DEFAULT_TTL = 3600.0
+DEFAULT_TTL = 604800.0  # 7 days
 DEFAULT_PREFIX = "simple-workflow/cache/"
 DEFAULT_CLEANUP_INTERVAL = 300.0
 
@@ -395,7 +395,7 @@ def build_cache() -> CacheStore:
 
     * ``SW_CACHE_BUCKET``  - enables the S3 backend when set.
     * ``SW_CACHE_BACKEND`` - ``memory`` selects the in-memory backend.
-    * ``SW_CACHE_TTL``     - entry TTL in seconds (default 3600).
+    * ``SW_CACHE_TTL``     - entry TTL in seconds (default 604800 = 7 days).
     * ``SW_CACHE_PREFIX``  - object key prefix inside the bucket.
     * ``SW_CACHE_ENDPOINT`` / ``SW_CACHE_REGION`` / ``SW_CACHE_ACCESS_KEY`` /
       ``SW_CACHE_SECRET_KEY`` / ``SW_CACHE_SESSION_TOKEN`` - S3 client options.

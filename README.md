@@ -367,7 +367,7 @@ algorithm whose result would otherwise be served from a stale cache entry.
 #                                  \__________ re-runs every time __________/
 ```
 
-Entries are stored in S3 and expire after a TTL (default **60 minutes**); a
+Entries are stored in S3 and expire after a TTL (default **7 days**); a
 background task periodically evicts stale objects. Enable the cache with:
 
 ```bash
@@ -375,7 +375,7 @@ background task periodically evicts stale objects. Enable the cache with:
 export SW_CACHE_ENDPOINT=http://minio:9000
 export SW_CACHE_BUCKET=my-bucket
 export SW_CACHE_PREFIX=simple-workflow/cache/   # optional
-export SW_CACHE_TTL=3600                         # optional, seconds
+export SW_CACHE_TTL=604800                       # optional, seconds (7 days)
 uv run simple-workflow serve
 ```
 
