@@ -13,7 +13,7 @@ from .compiler import compile_script
 from .engine import Executor, InputValue, concurrency_from_env
 from .errors import WorkflowError
 from .registry import build_registry
-from .tools.base import RunContext
+from .tools.base import RunContext, timeout_from_env
 from .types import ValueType, encode_value
 
 
@@ -65,7 +65,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     ctx = RunContext(
         endpoints=_parse_kv(args.endpoint),
         api_keys=_parse_kv(args.api_key),
-        timeout=float(os.environ.get("SW_TOOL_TIMEOUT", "300")),
+        timeout=timeout_from_env(),
     )
     outputs, _ = asyncio.run(
         Executor(plan, registry, concurrency=concurrency_from_env()).run(inputs, ctx)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
@@ -19,7 +18,7 @@ from .engine import Executor, InputValue, concurrency_from_env
 from .errors import CompileError, ScriptSyntaxError, WorkflowError
 from .registry import ToolRegistry, build_registry
 from .tools.api import ApiTool
-from .tools.base import RunContext
+from .tools.base import RunContext, timeout_from_env
 from .types import (
     ValueType,
     decode_value,
@@ -58,7 +57,11 @@ class RunRequest(BaseModel):
         default_factory=dict,
         description="Per-tool API keys, sent as X-API-Key, e.g. {'rvc': 'secret'}",
     )
-    timeout: float | None = Field(default=None, gt=0, le=3600)
+    timeout: float | None = Field(
+        default=None,
+        gt=0,
+        description="Per-node timeout in seconds; omit for no limit",
+    )
 
 
 class TimingOut(BaseModel):
@@ -185,11 +188,11 @@ async def run_endpoint(request: Request, body: RunRequest) -> RunResponse:
     plan = _compile(request, CompileRequest(script=body.script, input_types=body.input_types))
     registry = _registry(request)
 
-    default_timeout = float(os.environ.get("SW_TOOL_TIMEOUT", "300"))
+    default_timeout = timeout_from_env()
     ctx = RunContext(
         endpoints=body.tool_endpoints,
         api_keys=body.tool_api_keys,
-        timeout=body.timeout or default_timeout,
+        timeout=body.timeout if body.timeout is not None else default_timeout,
     )
 
     executor = Executor(

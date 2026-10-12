@@ -163,7 +163,7 @@ binary → raw bytes).
 | `bv`   | `(bvid: text) -> binary`                 | binary | `GET .../video/{bvid}/download?kind=audio` |
 | `msst` | `(model: text, audio: binary) -> binary` | binary | `POST` fields `model`, `audio` (+ `response_format=zip`) |
 | `rvc`  | `(model: text, audio: binary) -> binary` | binary | `POST` fields `model`, `audio` (+ `output_format=wav`) |
-| `v2m`  | `(language: text, audio: binary) -> binary` | binary | `POST` fields `language`, `audio` (+ `output_formats=mid,ustx,txt`) |
+| `v2m`  | `(language: text, audio: binary) -> binary` | binary | `POST` fields `language`, `audio` (+ `output_formats=mid,ustx,txt`, `output_pitch_curve=true`) |
 | `svs`  | `(model: text, ustx: binary) -> binary`  | binary | `POST` fields `model`, `ustx` (+ `output_format=wav`) |
 
 The endpoint may contain `{name}` placeholders (one per signature parameter);
@@ -193,8 +193,9 @@ enabled auth).
 
 `v2m` targets the [MSST API](https://github.com/Deliay/msst-api)'s Vocal2Midi
 endpoint (`POST /api/v2m/inference`); it turns vocal audio into a zip of
-lyric-aligned artifacts (MIDI, USTX and plain text by default), returned
-verbatim. The first argument is a **required 2-letter language code**
+lyric-aligned artifacts (MIDI, USTX and plain text by default, with the pitch
+curve enabled via `output_pitch_curve=true`), returned verbatim. The first
+argument is a **required 2-letter language code**
 (`zh`, `ja`, `en` or `yue`), sent as the `language` field so the service skips
 its own detection — write `[v2m:zh]` under a `->` feeding the audio. Set
 `TOOLS_V2M_ENDPOINT=http://host/api/v2m/inference`.
@@ -282,7 +283,7 @@ TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference \
   },
   "tool_endpoints": { "msst": "http://localhost:9000/api/msst/inference" },  // optional override
   "tool_api_keys": { "rvc": "secret" },                                      // optional, X-API-Key
-  "timeout": 300                                                             // optional, seconds
+  "timeout": 600                                                             // optional per-node seconds; omit for no limit
 }
 ```
 
@@ -305,6 +306,22 @@ it with `SW_CONCURRENCY` to let independent branches run together:
 ```bash
 SW_CONCURRENCY=4 uv run simple-workflow serve
 ```
+
+## Timeouts
+
+Each node's tool call runs **without a time limit** by default, so long-running
+inference jobs are never cut off. Bound a single request's per-node timeout with
+`timeout` (seconds), or set it for every run with `SW_TOOL_TIMEOUT`:
+
+```jsonc
+{ "timeout": 600 }  // per node, not for the whole run
+```
+
+```bash
+SW_TOOL_TIMEOUT=600 uv run simple-workflow serve
+```
+
+An unset (or blank) `SW_TOOL_TIMEOUT` means no limit.
 
 ## Caching
 

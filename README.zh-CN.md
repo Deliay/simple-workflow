@@ -145,7 +145,7 @@ binary → 原始字节）。
 | `bv`   | `(bvid: text) -> binary`                 | binary | `GET .../video/{bvid}/download?kind=audio`  |
 | `msst` | `(model: text, audio: binary) -> binary` | binary | `POST` 字段 `model`、`audio`（+ `response_format=zip`） |
 | `rvc`  | `(model: text, audio: binary) -> binary` | binary | `POST` 字段 `model`、`audio`（+ `output_format=wav`） |
-| `v2m`  | `(language: text, audio: binary) -> binary` | binary | `POST` 字段 `language`、`audio`（+ `output_formats=mid,ustx,txt`） |
+| `v2m`  | `(language: text, audio: binary) -> binary` | binary | `POST` 字段 `language`、`audio`（+ `output_formats=mid,ustx,txt`、`output_pitch_curve=true`） |
 | `svs`  | `(model: text, ustx: binary) -> binary`  | binary | `POST` 字段 `model`、`ustx`（+ `output_format=wav`） |
 
 端点里可以包含 `{name}` 占位符（每个对应一个签名参数）；它们会被 URL 编码后的实参替换，
@@ -170,7 +170,8 @@ binary → 原始字节）。
 
 `v2m` 对接 [MSST API](https://github.com/Deliay/msst-api) 的 Vocal2Midi 端点
 （`POST /api/v2m/inference`）；它把人声音频转换为一个 zip，内含按歌词对齐的产物（默认
-MIDI、USTX 与纯文本），并原样返回。第一个参数是**必填的 2 字母语言代码**（`zh`、`ja`、
+MIDI、USTX 与纯文本，并通过 `output_pitch_curve=true` 启用音高曲线），并原样返回。第一个参数是
+**必填的 2 字母语言代码**（`zh`、`ja`、
 `en` 或 `yue`），会作为 `language` 字段发送，让服务跳过自身的语言检测 —— 在 `->` 链上写
 `[v2m:zh]`，音频由边流入。设置 `TOOLS_V2M_ENDPOINT=http://host/api/v2m/inference`。
 
@@ -253,7 +254,7 @@ TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference \
   },
   "tool_endpoints": { "msst": "http://localhost:9000/api/msst/inference" },  // 可选覆盖
   "tool_api_keys": { "rvc": "secret" },                                      // 可选，X-API-Key
-  "timeout": 300                                                             // 可选，秒
+  "timeout": 600                                                             // 可选，单节点秒数；省略则不设上限
 }
 ```
 
@@ -275,6 +276,21 @@ TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference \
 ```bash
 SW_CONCURRENCY=4 uv run simple-workflow serve
 ```
+
+## 超时
+
+默认情况下，每个节点的工具调用**不设时间上限**，长时间运行的推理任务不会被中断。可以用
+请求里的 `timeout`（秒）限制单次运行的单节点超时，或用 `SW_TOOL_TIMEOUT` 对所有运行生效：
+
+```jsonc
+{ "timeout": 600 }  // 按节点计时，而非整次运行
+```
+
+```bash
+SW_TOOL_TIMEOUT=600 uv run simple-workflow serve
+```
+
+`SW_TOOL_TIMEOUT` 未设置（或为空）表示不设上限。
 
 ## 缓存
 
