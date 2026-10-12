@@ -157,7 +157,7 @@ binary → 原始字节）。
    `TOOLS_BV_ENDPOINT=http://xxx.xxx/api/b/video/{bvid}/download?kind=audio`。
 
 可选的 API Key 可以通过请求里的 `tool_api_keys` 或环境变量 `TOOLS_<NAME>_API_KEY` 提供，
-会以 `X-API-Key` 请求头发送。
+会以 `X-API-Key` 请求头发送。每次对外请求默认 **15 分钟**超时（见[超时](#超时)）。
 
 `bv` 通过 bvid 下载 B 站音频流（`kind=audio` 查询参数与 `{bvid}` 路径占位符都在 URL 里）。
 
@@ -279,8 +279,10 @@ SW_CONCURRENCY=4 uv run simple-workflow serve
 
 ## 超时
 
-默认情况下，每个节点的工具调用**不设时间上限**，长时间运行的推理任务不会被中断。可以用
-请求里的 `timeout`（秒）限制单次运行的单节点超时，或用 `SW_TOOL_TIMEOUT` 对所有运行生效：
+默认情况下，节点的工具调用**不设时间上限**，长时间运行的推理任务不会被中断。唯一的例外是
+**API 节点**：它对外发起请求的默认超时为 **15 分钟**，这样即便外部服务卡死，也不会把节点
+永远挂住。可以用请求里的 `timeout`（秒）限制单次运行的单节点超时，或用 `SW_TOOL_TIMEOUT`
+对所有运行生效：
 
 ```jsonc
 { "timeout": 600 }  // 按节点计时，而非整次运行
@@ -290,7 +292,7 @@ SW_CONCURRENCY=4 uv run simple-workflow serve
 SW_TOOL_TIMEOUT=600 uv run simple-workflow serve
 ```
 
-`SW_TOOL_TIMEOUT` 未设置（或为空）表示不设上限。
+`SW_TOOL_TIMEOUT` 未设置（或为空）时沿用上述默认：本地节点不设上限，API 请求 15 分钟后超时。
 
 ## 缓存
 

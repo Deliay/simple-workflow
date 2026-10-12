@@ -242,3 +242,32 @@ def test_generic_tools_use_positional_fields(monkeypatch: pytest.MonkeyPatch) ->
     asyncio.run(tool.run(["BV1"], RunContext(endpoints={"bv": "http://host/bv"})))
     # No binary params -> urlencoded form body.
     assert captured["body"] == b"a0=BV1"
+
+
+def test_request_timeout_defaults_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from simple_workflow.tools.api import DEFAULT_REQUEST_TIMEOUT
+
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"ok")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        captured["timeout"] = kwargs.get("timeout")
+        return real_client(*args, transport=transport, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("simple_workflow.tools.api.httpx.AsyncClient", factory)
+    tool = ApiTool("bv", Signature(params=(Param("id", TEXT),), output=BINARY))
+
+    # No timeout configured -> a bounded 15-minute default, never "hang forever".
+    asyncio.run(tool.run(["BV1"], RunContext(endpoints={"bv": "http://host/bv"})))
+    assert captured["timeout"] == DEFAULT_REQUEST_TIMEOUT == 15 * 60.0
+
+    # An explicit per-node timeout takes precedence.
+    asyncio.run(
+        tool.run(["BV1"], RunContext(endpoints={"bv": "http://host/bv"}, timeout=600.0))
+    )
+    assert captured["timeout"] == 600.0

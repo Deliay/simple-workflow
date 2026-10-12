@@ -177,7 +177,8 @@ again. Each endpoint is a **full URL**, resolved in this order:
 
 An optional API key may be supplied via `tool_api_keys` on the request or the
 `TOOLS_<NAME>_API_KEY` environment variable; it is sent as the `X-API-Key`
-header.
+header. Each outbound request defaults to a **15-minute** timeout (see
+[Timeouts](#timeouts)).
 
 `bv` downloads a Bilibili audio stream by bvid (the `kind=audio` query and the
 `{bvid}` path placeholder are part of the URL).
@@ -309,9 +310,11 @@ SW_CONCURRENCY=4 uv run simple-workflow serve
 
 ## Timeouts
 
-Each node's tool call runs **without a time limit** by default, so long-running
-inference jobs are never cut off. Bound a single request's per-node timeout with
-`timeout` (seconds), or set it for every run with `SW_TOOL_TIMEOUT`:
+A node's tool call runs **without a time limit** by default, so long-running
+inference jobs are never cut off. The one exception is an **API node**, whose
+outbound request defaults to **15 minutes** so a stalled external service cannot
+hang a node forever. Bound a single request's per-node timeout with `timeout`
+(seconds), or set it for every run with `SW_TOOL_TIMEOUT`:
 
 ```jsonc
 { "timeout": 600 }  // per node, not for the whole run
@@ -321,7 +324,8 @@ inference jobs are never cut off. Bound a single request's per-node timeout with
 SW_TOOL_TIMEOUT=600 uv run simple-workflow serve
 ```
 
-An unset (or blank) `SW_TOOL_TIMEOUT` means no limit.
+An unset (or blank) `SW_TOOL_TIMEOUT` keeps the defaults above: local nodes stay
+unlimited and API requests stop after 15 minutes.
 
 ## Caching
 

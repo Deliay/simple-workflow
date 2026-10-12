@@ -51,6 +51,11 @@ as ``X-API-Key`` (configurable via ``api_key_header``).
 
 The response body is the return value: ``number`` -> float, ``text`` -> str,
 ``binary`` -> raw bytes.
+
+A request is bounded by ``RunContext.timeout`` (the request's ``timeout`` field
+or ``SW_TOOL_TIMEOUT``).  When no timeout is configured it defaults to
+:data:`DEFAULT_REQUEST_TIMEOUT` (15 minutes), so a stalled external service
+cannot hang a node forever.
 """
 
 from __future__ import annotations
@@ -70,6 +75,11 @@ from ..types import ValueType
 from .base import RunContext, Tool
 
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+#: Outbound request timeout (seconds) for an API node when the run does not
+#: configure one.  A single call can take a while (large uploads, long inference
+#: jobs), so this is generous while still bounding a hung connection.
+DEFAULT_REQUEST_TIMEOUT = 15 * 60.0
 
 
 class ApiTool(Tool):
@@ -154,8 +164,11 @@ class ApiTool(Tool):
         if api_key := self._resolve_api_key(ctx):
             headers[self.api_key_header] = api_key
 
+        timeout = (
+            ctx.timeout if ctx.timeout is not None else DEFAULT_REQUEST_TIMEOUT
+        )
         try:
-            async with httpx.AsyncClient(timeout=ctx.timeout) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 if self.method == "GET":
                     query: dict[str, str] = {}
                     for index, value in remaining:

@@ -60,7 +60,10 @@ class RunRequest(BaseModel):
     timeout: float | None = Field(
         default=None,
         gt=0,
-        description="Per-node timeout in seconds; omit for no limit",
+        description=(
+            "Per-node timeout in seconds; omit for the default (no limit for "
+            "local nodes, 15 minutes for API requests)"
+        ),
     )
 
 
