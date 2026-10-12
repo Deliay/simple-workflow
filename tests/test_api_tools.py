@@ -86,7 +86,7 @@ def test_rvc_uses_named_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     assert b"wav" in body
 
 
-def test_v2m_sends_language_audio_and_default_output_formats(
+def test_v2m_sends_language_audio_and_default_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -116,6 +116,8 @@ def test_v2m_sends_language_audio_and_default_output_formats(
     assert b"zh" in body
     assert b'name="output_formats"' in body
     assert b"mid,ustx,txt" in body
+    assert b'name="output_pitch_curve"' in body
+    assert b"true" in body
     assert b'name="audio"' in body
     assert b'filename="vocal.wav"' in body
 

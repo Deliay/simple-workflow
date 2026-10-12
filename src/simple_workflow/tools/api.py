@@ -33,7 +33,8 @@ Examples::
 
     # Vocal2Midi (v2m)
     TOOLS_V2M_ENDPOINT=http://xxx.xxx/api/v2m/inference
-    # -> POST, fields: language=zh, audio, output_formats=mid,ustx,txt
+    # -> POST, fields: language=zh, audio, output_formats=mid,ustx,txt,
+    #    output_pitch_curve=true
 
     # DiffSinger / SVS
     TOOLS_SVS_ENDPOINT=http://xxx.xxx/api/diffsinger/inference
@@ -272,14 +273,14 @@ def make_api_tools() -> list[ApiTool]:
             transcode_audio=True,
         ),
         # POST /api/v2m/inference with a forced 2-letter language + audio
-        # (+ output_formats=mid,ustx,txt); returns a zip of the requested
-        # artifacts, forwarded untouched.
+        # (+ output_formats=mid,ustx,txt, output_pitch_curve=true); returns a
+        # zip of the requested artifacts, forwarded untouched.
         ApiTool(
             "v2m",
             Signature(params=(Param("language", text), Param("audio", binary)), output=binary),
             field_names=("language", "audio"),
             file_names={"audio": "vocal.wav"},
-            default_fields={"output_formats": "mid,ustx,txt"},
+            default_fields={"output_formats": "mid,ustx,txt", "output_pitch_curve": "true"},
             transcode_audio=True,
             transcode_channels=1,
         ),
